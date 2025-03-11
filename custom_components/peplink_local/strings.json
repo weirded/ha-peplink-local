@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Peplink Router",
+        "description": "Set up Peplink Local integration to monitor your Peplink router.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error",
+      "ssl_error": "SSL certificate error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Peplink Options",
+        "description": "Configure options for the Peplink integration",
+        "data": {
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected",
+        "state": {
+          "on": "Connected",
+          "off": "Disconnected"
+        }
+      }
+    },
+    "sensor": {
+      "message": {
+        "name": "Message"
+      },
+      "ip": {
+        "name": "IP"
+      },
+      "gateway": {
+        "name": "Gateway"
+      },
+      "uptime": {
+        "name": "Uptime"
+      }
+    }
+  }
+}

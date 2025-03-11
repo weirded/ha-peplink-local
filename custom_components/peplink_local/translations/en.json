@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Peplink Router",
+        "description": "Set up a Peplink router integration to monitor WAN status and track devices.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL Certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the router",
+      "invalid_auth": "Invalid authentication",
+      "ssl_error": "SSL certificate validation failed. Try disabling SSL verification.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Peplink Router",
+        "description": "Update your Peplink router integration settings.",
+        "data": {
+          "verify_ssl": "Verify SSL Certificate"
+        }
+      }
+    }
+  }
+}
