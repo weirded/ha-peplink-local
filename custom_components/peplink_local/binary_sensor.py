@@ -7,7 +7,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .sensor import PeplinkWanConnectedSensor
 
 _LOGGER = logging.getLogger(__name__)
 

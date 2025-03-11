@@ -1,0 +1,2 @@
+1. We are targeting home assistant versions 2025.1 and above. 
+2. Be surgical with changes. Avoid refactors unless specifically prompted.

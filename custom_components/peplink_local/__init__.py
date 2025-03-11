@@ -11,9 +11,10 @@ from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, Platfor
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 
-from .peplink_api import PeplinkAPI
 from .const import DOMAIN, CONF_VERIFY_SSL, SCAN_INTERVAL
+from .peplink_api import PeplinkAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,16 +101,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             }
             
         except Exception as e:
-            _LOGGER.exception("Error fetching data from Peplink router: %s", e)
-            return {
-                "wan": {"connection": []},
-                "clients": {"client": []}
-            }
+            _LOGGER.error("Error fetching data from Peplink router: %s", e)
+            raise UpdateFailed(f"Error fetching data: {e}")
 
+    # Create update coordinator
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name=f"Peplink Router ({host})",
+        name=f"{DOMAIN}_{host}",
         update_method=async_update_data,
         update_interval=timedelta(seconds=SCAN_INTERVAL),
     )
@@ -117,29 +116,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
 
-    # Store the coordinator and client for use by the platforms
+    # Store coordinator and client in hass data
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
-        "session": session,
-        "verify_ssl": verify_ssl,
     }
+
+    # Register the main router device
+    device_registry = async_get_device_registry(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=f"Peplink Router ({host})",
+        manufacturer="Peplink",
+        model="Router",
+    )
 
     # Set up all platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Register update listener for config entry changes
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
 
 
 def _create_insecure_ssl_context():
     """Create an insecure SSL context (non-blocking function)."""
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    return ssl_context
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -147,26 +151,23 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     if unload_ok:
-        # Get the client and close it
-        client = hass.data[DOMAIN][entry.entry_id]["client"]
-        await client.close()
-        
-        # If we created a custom session, close it
-        if not hass.data[DOMAIN][entry.entry_id]["verify_ssl"]:
-            session = hass.data[DOMAIN][entry.entry_id]["session"]
-            await session.close()
-        
-        # Remove the entry from hass.data
-        hass.data[DOMAIN].pop(entry.entry_id)
-        
-        # If this was the last entry, remove the domain
-        if not hass.data[DOMAIN]:
-            hass.data.pop(DOMAIN)
+        # Clean up resources
+        if entry.entry_id in hass.data[DOMAIN]:
+            client = hass.data[DOMAIN][entry.entry_id].get("client")
+            if client:
+                await client.close()
+            
+            # Remove the entry data
+            hass.data[DOMAIN].pop(entry.entry_id)
+            
+            # If no more entries, remove the domain data
+            if not hass.data[DOMAIN]:
+                hass.data.pop(DOMAIN)
     
     return unload_ok
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Reload config entry."""
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)

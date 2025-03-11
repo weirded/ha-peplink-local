@@ -1,7 +1,7 @@
 """Sensor platform for Peplink Local integration."""
 import logging
 from typing import Any, Dict, List, Optional
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.components.binary_sensor import (
@@ -9,18 +9,18 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
     ATTR_WAN_ID,
-    ATTR_WAN_NAME,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,22 +49,31 @@ async def async_setup_entry(
             _LOGGER.debug("WAN connections found: %s", wan_data["connection"])
             for wan in wan_data["connection"]:
                 # Only create sensors for enabled WAN interfaces
-                if "id" in wan and "name" in wan and wan.get("enable", False):
-                    _LOGGER.debug("Creating sensors for WAN: %s (%s)", wan["name"], wan["id"])
+                if "id" in wan and wan.get("enable", False):
+                    wan_id = wan["id"]
+                    wan_name = wan.get("name", f"WAN{wan_id}")
+                    standard_name = f"WAN{wan_id}"
                     
-                    # Create a device for this WAN interface
-                    device_id = f"{entry.entry_id}_wan_{wan['id']}"
-                    device_name = f"Peplink WAN {wan['name']}"
+                    _LOGGER.debug("Creating sensors for %s (ID: %s)", standard_name, wan_id)
+                    
+                    # Create name sensor
+                    entities.append(
+                        PeplinkWanNameSensor(
+                            coordinator,
+                            entry.entry_id,
+                            wan_id,
+                            standard_name,
+                            wan_name,
+                        )
+                    )
                     
                     # Create binary sensor for connection status
                     entities.append(
                         PeplinkWanConnectedSensor(
                             coordinator,
                             entry.entry_id,
-                            wan["id"],
-                            wan["name"],
-                            device_id,
-                            device_name,
+                            wan_id,
+                            standard_name,
                         )
                     )
                     
@@ -73,10 +82,8 @@ async def async_setup_entry(
                         PeplinkWanMessageSensor(
                             coordinator,
                             entry.entry_id,
-                            wan["id"],
-                            wan["name"],
-                            device_id,
-                            device_name,
+                            wan_id,
+                            standard_name,
                         )
                     )
                     
@@ -85,10 +92,8 @@ async def async_setup_entry(
                         PeplinkWanIPSensor(
                             coordinator,
                             entry.entry_id,
-                            wan["id"],
-                            wan["name"],
-                            device_id,
-                            device_name,
+                            wan_id,
+                            standard_name,
                         )
                     )
                     
@@ -97,22 +102,18 @@ async def async_setup_entry(
                         PeplinkWanGatewaySensor(
                             coordinator,
                             entry.entry_id,
-                            wan["id"],
-                            wan["name"],
-                            device_id,
-                            device_name,
+                            wan_id,
+                            standard_name,
                         )
                     )
                     
-                    # Create sensor for Uptime
+                    # Create sensor for last connected timestamp
                     entities.append(
-                        PeplinkWanUptimeSensor(
+                        PeplinkWanLastConnectedSensor(
                             coordinator,
                             entry.entry_id,
-                            wan["id"],
-                            wan["name"],
-                            device_id,
-                            device_name,
+                            wan_id,
+                            standard_name,
                         )
                     )
                 else:
@@ -140,25 +141,21 @@ class PeplinkWanBaseSensor(CoordinatorEntity):
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._config_entry_id = config_entry_id
         self._wan_id = wan_id
-        self._wan_name = wan_name
-        self._device_id = device_id
-        self._device_name = device_name
+        self._standard_name = standard_name
         self._attr_has_entity_name = True
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this Peplink WAN interface."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
+            identifiers={(DOMAIN, f"{self._config_entry_id}_wan_{self._wan_id}")},
+            name=f"Peplink {self._standard_name}",
             manufacturer="Peplink",
             model="WAN Interface",
             via_device=(DOMAIN, self._config_entry_id),
@@ -177,6 +174,37 @@ class PeplinkWanBaseSensor(CoordinatorEntity):
         return {}
 
 
+class PeplinkWanNameSensor(PeplinkWanBaseSensor, SensorEntity):
+    """Representation of a Peplink WAN name sensor."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        config_entry_id: str,
+        wan_id: str,
+        standard_name: str,
+        configured_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
+        self._configured_name = configured_name
+        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_name"
+        self._attr_name = f"{standard_name} Name"
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        wan_data = self.get_wan_data()
+        return wan_data.get("name", self._configured_name)
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        return {
+            ATTR_WAN_ID: self._wan_id,
+        }
+
+
 class PeplinkWanConnectedSensor(PeplinkWanBaseSensor, BinarySensorEntity):
     """Representation of a Peplink WAN connection status sensor."""
 
@@ -185,16 +213,14 @@ class PeplinkWanConnectedSensor(PeplinkWanBaseSensor, BinarySensorEntity):
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry_id, wan_id, wan_name, device_id, device_name)
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
         self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_connected"
-        self._attr_name = f"{wan_name} Connected"
+        self._attr_name = f"{standard_name} Connected"
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-
+        
     @property
     def is_on(self) -> bool:
         """Return true if the WAN interface is connected."""
@@ -206,7 +232,6 @@ class PeplinkWanConnectedSensor(PeplinkWanBaseSensor, BinarySensorEntity):
         """Return the state attributes."""
         return {
             ATTR_WAN_ID: self._wan_id,
-            ATTR_WAN_NAME: self._wan_name,
         }
 
 
@@ -218,14 +243,12 @@ class PeplinkWanMessageSensor(PeplinkWanBaseSensor, SensorEntity):
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry_id, wan_id, wan_name, device_id, device_name)
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
         self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_message"
-        self._attr_name = f"{wan_name} Message"
+        self._attr_name = f"{standard_name} Message"
 
     @property
     def native_value(self) -> str:
@@ -238,7 +261,6 @@ class PeplinkWanMessageSensor(PeplinkWanBaseSensor, SensorEntity):
         """Return the state attributes."""
         return {
             ATTR_WAN_ID: self._wan_id,
-            ATTR_WAN_NAME: self._wan_name,
         }
 
 
@@ -250,14 +272,12 @@ class PeplinkWanIPSensor(PeplinkWanBaseSensor, SensorEntity):
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry_id, wan_id, wan_name, device_id, device_name)
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
         self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_ip"
-        self._attr_name = f"{wan_name} IP"
+        self._attr_name = f"{standard_name} IP"
 
     @property
     def native_value(self) -> str:
@@ -270,7 +290,6 @@ class PeplinkWanIPSensor(PeplinkWanBaseSensor, SensorEntity):
         """Return the state attributes."""
         attrs = {
             ATTR_WAN_ID: self._wan_id,
-            ATTR_WAN_NAME: self._wan_name,
         }
         
         wan_data = self.get_wan_data()
@@ -290,14 +309,12 @@ class PeplinkWanGatewaySensor(PeplinkWanBaseSensor, SensorEntity):
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry_id, wan_id, wan_name, device_id, device_name)
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
         self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_gateway"
-        self._attr_name = f"{wan_name} Gateway"
+        self._attr_name = f"{standard_name} Gateway"
 
     @property
     def native_value(self) -> str:
@@ -310,35 +327,49 @@ class PeplinkWanGatewaySensor(PeplinkWanBaseSensor, SensorEntity):
         """Return the state attributes."""
         return {
             ATTR_WAN_ID: self._wan_id,
-            ATTR_WAN_NAME: self._wan_name,
         }
 
 
-class PeplinkWanUptimeSensor(PeplinkWanBaseSensor, SensorEntity):
-    """Representation of a Peplink WAN Uptime sensor."""
+class PeplinkWanLastConnectedSensor(PeplinkWanBaseSensor, SensorEntity):
+    """Representation of a Peplink WAN Last Connected sensor."""
 
     def __init__(
         self,
         coordinator: DataUpdateCoordinator,
         config_entry_id: str,
         wan_id: str,
-        wan_name: str,
-        device_id: str,
-        device_name: str,
+        standard_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry_id, wan_id, wan_name, device_id, device_name)
-        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_uptime"
-        self._attr_name = f"{wan_name} Uptime"
-        self._attr_device_class = SensorDeviceClass.DURATION
-        self._attr_native_unit_of_measurement = "s"
-        self._attr_suggested_display_precision = 0
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
+        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_last_connected"
+        self._attr_name = f"{standard_name} Last Connected"
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._last_timestamp = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        wan_data = self.get_wan_data()
+        uptime = wan_data.get("uptime", 0)
+        
+        if uptime is not None and uptime > 0:
+            # Calculate the timestamp when the interface was last connected
+            self._last_timestamp = dt_util.utcnow() - timedelta(seconds=uptime)
+        
+        self.async_write_ha_state()
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> datetime:
         """Return the state of the sensor."""
         wan_data = self.get_wan_data()
-        return wan_data.get("uptime", 0)
+        uptime = wan_data.get("uptime", 0)
+        
+        if uptime is not None and uptime > 0:
+            # Calculate the timestamp when the interface was last connected
+            return dt_util.utcnow() - timedelta(seconds=uptime)
+        
+        return None
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
@@ -348,10 +379,12 @@ class PeplinkWanUptimeSensor(PeplinkWanBaseSensor, SensorEntity):
         
         attrs = {
             ATTR_WAN_ID: self._wan_id,
-            ATTR_WAN_NAME: self._wan_name,
         }
         
         if uptime:
+            # Add uptime in seconds
+            attrs["uptime_seconds"] = uptime
+            
             # Add formatted uptime
             td = timedelta(seconds=uptime)
             days = td.days
