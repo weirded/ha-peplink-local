@@ -25,6 +25,17 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Connection type mapping to human-readable names
+CONNECTION_TYPE_MAP = {
+    "modem": "Modem",
+    "wireless": "Wireless",
+    "gobi": "Cellular",
+    "cellular": "Cellular",
+    "ipsec": "IPsec",
+    "adsl": "ADSL",
+    "ethernet": "Ethernet",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -97,9 +108,9 @@ async def async_setup_entry(
                         )
                     )
                     
-                    # Create sensor for Gateway
+                    # Create sensor for connection type
                     entities.append(
-                        PeplinkWanGatewaySensor(
+                        PeplinkWanTypeSensor(
                             coordinator,
                             entry.entry_id,
                             wan_id,
@@ -107,9 +118,19 @@ async def async_setup_entry(
                         )
                     )
                     
-                    # Create sensor for last connected timestamp
+                    # Create sensor for priority
                     entities.append(
-                        PeplinkWanLastConnectedSensor(
+                        PeplinkWanPrioritySensor(
+                            coordinator,
+                            entry.entry_id,
+                            wan_id,
+                            standard_name,
+                        )
+                    )
+                    
+                    # Create sensor for up since timestamp
+                    entities.append(
+                        PeplinkWanUpSinceSensor(
                             coordinator,
                             entry.entry_id,
                             wan_id,
@@ -293,6 +314,8 @@ class PeplinkWanIPSensor(PeplinkWanBaseSensor, SensorEntity):
         }
         
         wan_data = self.get_wan_data()
+        if "gateway" in wan_data:
+            attrs["gateway"] = wan_data["gateway"]
         if "mask" in wan_data:
             attrs["subnet_mask"] = wan_data["mask"]
         if "dns" in wan_data and isinstance(wan_data["dns"], list):
@@ -301,8 +324,8 @@ class PeplinkWanIPSensor(PeplinkWanBaseSensor, SensorEntity):
         return attrs
 
 
-class PeplinkWanGatewaySensor(PeplinkWanBaseSensor, SensorEntity):
-    """Representation of a Peplink WAN Gateway sensor."""
+class PeplinkWanTypeSensor(PeplinkWanBaseSensor, SensorEntity):
+    """Representation of a Peplink WAN connection type sensor."""
 
     def __init__(
         self,
@@ -313,14 +336,46 @@ class PeplinkWanGatewaySensor(PeplinkWanBaseSensor, SensorEntity):
     ):
         """Initialize the sensor."""
         super().__init__(coordinator, config_entry_id, wan_id, standard_name)
-        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_gateway"
-        self._attr_name = f"{standard_name} Gateway"
+        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_type"
+        self._attr_name = f"{standard_name} Connection Type"
 
     @property
     def native_value(self) -> str:
         """Return the state of the sensor."""
         wan_data = self.get_wan_data()
-        return wan_data.get("gateway", "Unknown")
+        raw_type = wan_data.get("type", "Unknown")
+        return CONNECTION_TYPE_MAP.get(raw_type, raw_type)
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        wan_data = self.get_wan_data()
+        return {
+            ATTR_WAN_ID: self._wan_id,
+            "raw_type": wan_data.get("type", "Unknown"),
+        }
+
+
+class PeplinkWanPrioritySensor(PeplinkWanBaseSensor, SensorEntity):
+    """Representation of a Peplink WAN priority sensor."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        config_entry_id: str,
+        wan_id: str,
+        standard_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, config_entry_id, wan_id, standard_name)
+        self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_priority"
+        self._attr_name = f"{standard_name} Priority"
+
+    @property
+    def native_value(self) -> int:
+        """Return the state of the sensor."""
+        wan_data = self.get_wan_data()
+        return wan_data.get("priority", 0)
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
@@ -330,8 +385,8 @@ class PeplinkWanGatewaySensor(PeplinkWanBaseSensor, SensorEntity):
         }
 
 
-class PeplinkWanLastConnectedSensor(PeplinkWanBaseSensor, SensorEntity):
-    """Representation of a Peplink WAN Last Connected sensor."""
+class PeplinkWanUpSinceSensor(PeplinkWanBaseSensor, SensorEntity):
+    """Representation of a Peplink WAN Up Since sensor."""
 
     def __init__(
         self,
@@ -343,7 +398,7 @@ class PeplinkWanLastConnectedSensor(PeplinkWanBaseSensor, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator, config_entry_id, wan_id, standard_name)
         self._attr_unique_id = f"{config_entry_id}_wan_{wan_id}_last_connected"
-        self._attr_name = f"{standard_name} Last Connected"
+        self._attr_name = f"{standard_name} Up Since"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         self._last_timestamp = None
 

@@ -1,16 +1,28 @@
-# Peplink Local Integration for Home Assistant
+# Home Assistant Peplink Local Integration
+
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![GitHub Release][releases-shield]][releases]
+[![License][license-shield]](LICENSE)
 
 This custom integration allows you to monitor and track your Peplink router from Home Assistant. It uses the local Peplink API to provide sensors for WAN connections and device tracking capabilities.
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=weirded&repository=ha-peplink-local&category=integration)
+
 ## Features
 
-- **WAN Status Sensors**: Creates a text sensor for each WAN connection showing its current status
+- **WAN Status Sensors**: 
+  - Connection status (binary sensor)
+  - WAN name (text sensor)
+  - Connection message (text sensor)
+  - IP address with gateway information (text sensor)
+  - Connection type (text sensor)
+  - Priority (numeric sensor)
+  - Up since timestamp (timestamp sensor)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
 - **Local Communication**: Communicates directly with your Peplink router over your local network
 
 ## Requirements
 
-- A Peplink router running firmware 8.1.1 or later
 - The router must be accessible on your local network
 - Valid admin credentials for your Peplink router
 
@@ -40,14 +52,36 @@ This custom integration allows you to monitor and track your Peplink router from
    - **IP Address**: The IP address of your Peplink router
    - **Username**: Admin username for your Peplink router
    - **Password**: Admin password for your Peplink router
+   - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
 4. Click "Submit"
 
 The integration will automatically:
-1. Register a client with your Peplink router
-2. Generate API credentials (client ID and client secret)
-3. Obtain an access token
-4. Create sensors for each WAN connection
+1. Connect to your Peplink router using the provided credentials
+2. Create a device for your Peplink router
+3. Create devices for each enabled WAN interface
+4. Create sensors for each WAN interface with standardized naming (WAN1, WAN2, etc.)
 5. Set up device tracking for connected clients
+
+## Available Entities
+
+For each enabled WAN interface (e.g., WAN1), the following entities are created:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `binary_sensor.wan1_connected` | Binary Sensor | Shows if the WAN interface is connected |
+| `sensor.wan1_name` | Sensor | The configured name of the WAN interface |
+| `sensor.wan1_message` | Sensor | Status message for the WAN interface |
+| `sensor.wan1_ip` | Sensor | Current IP address of the WAN interface (includes gateway as attribute) |
+| `sensor.wan1_connection_type` | Sensor | Type of connection (Ethernet, Cellular, etc.) |
+| `sensor.wan1_priority` | Sensor | Priority of the WAN interface for routing |
+| `sensor.wan1_up_since` | Timestamp | When the WAN interface was last connected/up since |
+
+Additionally, device tracker entities are created for each client connected to your Peplink router.
+
+
+## Data Refresh
+
+The integration refreshes data from your Peplink router every 30 seconds.
 
 ## API Documentation
 
@@ -59,8 +93,8 @@ If you encounter issues with the integration:
 
 1. Check that your Peplink router is accessible at the configured IP address
 2. Verify that your username and password are correct
-3. Ensure your router is running firmware 8.1.1 or later
 4. Check the Home Assistant logs for any error messages
+5. If you see SSL errors, try disabling the "Verify SSL" option during setup
 
 ## Contributing
 
@@ -68,4 +102,4 @@ Contributions to improve the integration are welcome! Please feel free to submit
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
