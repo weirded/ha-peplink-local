@@ -1,4 +1,4 @@
-# Home Assistant Peplink Local Integration\
+# Home Assistant Peplink Local Integration
 
 This custom integration allows you to monitor and track your Peplink router from Home Assistant. It uses the local Peplink API to provide sensors for WAN connections and device tracking capabilities.
 
