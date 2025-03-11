@@ -1,8 +1,4 @@
-# Home Assistant Peplink Local Integration
-
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![GitHub Release][releases-shield]][releases]
-[![License][license-shield]](LICENSE)
+# Home Assistant Peplink Local Integration\
 
 This custom integration allows you to monitor and track your Peplink router from Home Assistant. It uses the local Peplink API to provide sensors for WAN connections and device tracking capabilities.
 
