@@ -5,6 +5,8 @@ Peplink API Client - Async API class for interacting with the Peplink router API
 This module provides the PeplinkAPI class that connects to a Peplink router's local API,
 authenticates, and retrieves information about WAN status and connected clients.
 """
+from __future__ import annotations
+
 import logging
 import json
 import ssl
@@ -12,10 +14,19 @@ import asyncio
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 from functools import partial
+import time
 
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class PeplinkAuthFailed(Exception):
+    """Authentication failed."""
+
+
+class PeplinkSSLError(Exception):
+    """SSL Certificate validation error."""
 
 
 def _create_insecure_ssl_context():
@@ -30,163 +41,199 @@ class PeplinkAPI:
     """Async class for interacting with the Peplink router API."""
 
     def __init__(
-        self, 
-        router_ip: str, 
-        username: str, 
-        password: str, 
+        self,
+        host: str,
+        username: str,
+        password: str,
         session: Optional[aiohttp.ClientSession] = None,
-        verify_ssl: bool = True
+        verify_ssl: bool = True,
     ):
-        """
-        Initialize the Peplink API client.
-        
-        Args:
-            router_ip (str): IP address of the Peplink router
-            username (str): Username for authentication
-            password (str): Password for authentication
-            session (aiohttp.ClientSession, optional): Existing aiohttp session
-            verify_ssl (bool): Whether to verify SSL certificates (used by caller)
-        """
-        self.base_url = f"https://{router_ip}"
+        """Initialize the Peplink API client."""
+        self.host = host  # Store the host for reference
+        self.base_url = f"https://{host}"
         self.username = username
         self.password = password
         self._session = session
-        self.verify_ssl = verify_ssl  # Kept for compatibility, but SSL is handled by the session
-        self._connected = False
+        self._verify_ssl = verify_ssl
         self._own_session = False
-        self._cookie_jar = None
+        self._connected = False
+        self._auth_cookie = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create an aiohttp session."""
-        if self._session is None:
-            # Create a session with the appropriate SSL settings
-            if not self.verify_ssl:
-                # Create SSL context in a non-blocking way
-                loop = asyncio.get_running_loop()
-                ssl_context = await loop.run_in_executor(
-                    None, 
-                    partial(_create_insecure_ssl_context)
-                )
-                
-                # Create a connector with the SSL context
-                connector = aiohttp.TCPConnector(ssl=ssl_context)
-                
-                # Create a cookie jar that accepts all cookies
-                self._cookie_jar = aiohttp.CookieJar(unsafe=True)
-                
-                # Create a session with the cookie jar and connector
-                self._session = aiohttp.ClientSession(
-                    connector=connector, 
-                    cookie_jar=self._cookie_jar
-                )
+        """Get or create a session with the appropriate SSL settings."""
+        if not self._session:
+            if self._verify_ssl:
+                # Create a standard session
+                self._session = aiohttp.ClientSession()
             else:
-                # Create a session with default SSL settings but with a cookie jar
-                self._cookie_jar = aiohttp.CookieJar()
-                self._session = aiohttp.ClientSession(cookie_jar=self._cookie_jar)
+                # Create a session with SSL verification disabled
+                ssl_context = _create_insecure_ssl_context()
+                connector = aiohttp.TCPConnector(
+                    ssl=ssl_context,
+                    verify_ssl=False
+                )
+                self._session = aiohttp.ClientSession(connector=connector)
                 
             self._own_session = True
-            
+        
         return self._session
 
     async def connect(self) -> bool:
-        """
-        Establish a connection to the Peplink router and authenticate.
-        
-        Returns:
-            bool: True if connection and authentication were successful
-        """
+        """Connect to the Peplink router and authenticate."""
         if self._connected:
             return True
-            
+        
+        # Create or get a session object
         session = await self._get_session()
         
-        # Get the web login challenge
-        challenge_url = urljoin(self.base_url, "/api/login")
         try:
-            _LOGGER.debug("Getting login challenge from %s", challenge_url)
-            async with session.get(challenge_url) as response:
-                response.raise_for_status()
-                challenge_data = await response.json()
-                _LOGGER.debug("Received challenge: %s", challenge_data)
-        except aiohttp.ClientError as e:
-            _LOGGER.error("Error connecting to Peplink router: %s", e)
-            return False
-        except json.JSONDecodeError:
-            _LOGGER.error("Unexpected response format from the router")
-            return False
-        
-        # Perform the login
-        login_data = {
-            "username": self.username,
-            "password": self.password,
-            "challenge": challenge_data.get("challenge", "")
-        }
-        
-        try:
-            _LOGGER.debug("Sending login request with data: %s", {**login_data, 'password': '***'})
-            async with session.post(challenge_url, json=login_data) as response:
-                response.raise_for_status()
-                login_result = await response.json()
-                _LOGGER.debug("Login response: %s", login_result)
-                
-                # Check for success in multiple formats
-                if not (login_result.get("success", False) or login_result.get("stat") == "ok"):
-                    error_msg = login_result.get('message', 'Unknown error')
-                    _LOGGER.error("Login failed: %s", error_msg)
-                    return False
-                
-                # Store any cookies or tokens returned by the server
-                if 'token' in login_result:
-                    _LOGGER.debug("Setting auth token for future requests")
-                    session.headers.update({"Authorization": f"Bearer {login_result['token']}"})
-                
-                # Check if cookies were set
-                cookies = session.cookie_jar.filter_cookies(response.url)
-                _LOGGER.debug("Cookies after login: %s", cookies)
-                
-                # Some Peplink routers use cookies for authentication
-                if not cookies:
-                    _LOGGER.debug("No cookies set, checking for session ID in response")
-                    # Check if there's a session ID in the response
-                    if 'session_id' in login_result:
-                        cookie = {'session_id': login_result['session_id']}
-                        _LOGGER.debug("Setting session cookie: %s", cookie)
-                        session.cookie_jar.update_cookies(cookie, response.url)
+            # Step 1: Login to get a cookie
+            login_url = urljoin(self.base_url, "/api/login")
+            
+            login_data = {
+                "username": self.username,
+                "password": self.password,
+                "challenge": "challenge"  # Required by Peplink API
+            }
+            
+            _LOGGER.debug("Attempting to connect to %s", login_url)
+            
+            try:
+                async with session.post(login_url, json=login_data) as response:
+                    if response.status == 401:
+                        _LOGGER.error("Failed to authenticate: 401 Unauthorized")
+                        return False
                     
-        except aiohttp.ClientError as e:
-            _LOGGER.error("Error during login: %s", e)
-            return False
-        except json.JSONDecodeError:
-            _LOGGER.error("Unexpected response format from the router")
-            return False
-        
-        # Verify that we can access protected endpoints
-        try:
-            _LOGGER.debug("Verifying authentication by accessing a protected endpoint")
-            test_url = urljoin(self.base_url, "/api/status.system")
-            async with session.get(test_url) as response:
+                    response.raise_for_status()
+                    login_response = await response.json()
+                    
+                    # Check for successful login
+                    if login_response.get("stat") != "ok":
+                        _LOGGER.error("Failed to authenticate: %s", login_response.get("message", "Unknown error"))
+                        return False
+                    
+                    # Parse cookie from response
+                    cookies = response.cookies
+                    _LOGGER.debug("Cookies from response: %s", cookies)
+                    
+                    # Extract the bauth cookie
+                    if "bauth" in cookies:
+                        self._auth_cookie = cookies["bauth"].value
+                        _LOGGER.debug("Got auth cookie: %s", self._auth_cookie)
+                    
+                    if not self._auth_cookie:
+                        # Try extracting from Set-Cookie header if available
+                        if "Set-Cookie" in response.headers:
+                            cookie_header = response.headers["Set-Cookie"]
+                            _LOGGER.debug("Set-Cookie header: %s", cookie_header)
+                            
+                            if "bauth=" in cookie_header:
+                                # Extract the bauth value from cookie header
+                                # Format is typically: bauth=VALUE; path=/; HttpOnly
+                                cookie_parts = cookie_header.split(';')
+                                for part in cookie_parts:
+                                    if part.strip().startswith("bauth="):
+                                        self._auth_cookie = part.strip().split('=', 1)[1]
+                                        _LOGGER.debug("Extracted bauth cookie from header: %s", self._auth_cookie)
+                                        break
+                    
+                    if not self._auth_cookie:
+                        _LOGGER.error("No auth cookie received after login")
+                        return False
+            except aiohttp.ClientConnectorCertificateError as e:
+                _LOGGER.error("SSL Certificate error: %s", e)
+                self._connected = False
+                raise PeplinkSSLError(f"SSL Certificate validation failed: {e}")
+                
+            # Step 3: Verify that we're authenticated by accessing a protected endpoint
+            verify_url = urljoin(self.base_url, "/api/status")
+            
+            # Ensure cookie is set for verification request
+            headers = {}
+            if self._auth_cookie:
+                headers["Cookie"] = f"bauth={self._auth_cookie}"
+                _LOGGER.debug("Using stored auth cookie for verification request: %s", headers["Cookie"])
+            
+            async with session.get(verify_url, headers=headers) as response:
                 if response.status == 401:
-                    _LOGGER.error("Authentication verification failed: Unauthorized")
+                    _LOGGER.error("Failed to authenticate: 401 Unauthorized")
                     return False
+                
                 response.raise_for_status()
-                test_data = await response.json()
-                _LOGGER.debug("Authentication verification successful: %s", test_data)
+                verify_data = await response.json()
+                
+                # Even if it returns an error code (other than 401), it's fine as long as we can access it
+                _LOGGER.debug("Authentication verification successful: %s", verify_data)
+            
+            self._connected = True
+            return True
+            
+        except PeplinkSSLError:
+            # Re-raise SSL errors so they can be handled differently from auth errors
+            raise
+        except aiohttp.ClientConnectorError as e:
+            _LOGGER.error("Connection error (host unreachable): %s", e)
+            self._connected = False
+            return False
         except aiohttp.ClientError as e:
-            _LOGGER.error("Error verifying authentication: %s", e)
+            _LOGGER.error("Connection error: %s", e)
+            self._connected = False
             return False
-        except json.JSONDecodeError:
-            _LOGGER.error("Unexpected response format during authentication verification")
-            return False
-        
-        self._connected = True
-        return True
-    
+
     async def ensure_connected(self) -> bool:
         """Ensure that a connection has been established."""
         if not self._connected:
             return await self.connect()
         return True
     
+    async def _api_request(self, endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict:
+        """Make an API request to the Peplink router."""
+        if not self._connected:
+            # Try to connect first
+            _LOGGER.debug("Not connected, attempting to connect first")
+            if not await self.connect():
+                raise Exception("Not connected to Peplink router")
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, endpoint)
+        
+        headers = {}
+        # Manually add cookie to request if available
+        if self._auth_cookie:
+            headers["Cookie"] = f"bauth={self._auth_cookie}"
+            _LOGGER.debug("Adding auth cookie to request: %s", headers["Cookie"])
+        
+        try:
+            async with session.request(method, url, json=data, headers=headers) as response:
+                # Check for authentication error
+                if response.status == 401:
+                    _LOGGER.error("API error: Unauthorized (code: 401)")
+                    # Try to reconnect and retry the request
+                    self._connected = False
+                    if await self.connect():
+                        _LOGGER.debug("Successfully reconnected, retrying request")
+                        headers = {}
+                        if self._auth_cookie:
+                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        async with session.request(method, url, json=data, headers=headers) as retry_response:
+                            if retry_response.status == 401:
+                                _LOGGER.error("Still unauthorized after reconnect attempt")
+                                raise Exception("Unauthorized (code: 401)")
+                            retry_response.raise_for_status()
+                            return await retry_response.json()
+                    else:
+                        raise Exception("Unauthorized (code: 401)")
+                
+                # Raise other HTTP errors
+                response.raise_for_status()
+                
+                # Return parsed JSON response
+                return await response.json()
+                
+        except aiohttp.ClientError as e:
+            _LOGGER.error("API request error: %s", e)
+            raise Exception(f"API request error: {e}")
+
     async def get_wan_status(self) -> Dict[str, Any]:
         """
         Retrieve WAN status for all WAN links.
@@ -203,59 +250,43 @@ class PeplinkAPI:
         
         try:
             _LOGGER.debug("Requesting WAN status from %s", wan_url)
-            async with session.get(wan_url) as response:
-                # If we get a 401, try to reconnect once
-                if response.status == 401:
-                    _LOGGER.warning("Authentication expired, attempting to reconnect")
-                    self._connected = False
-                    if not await self.connect():
-                        _LOGGER.error("Failed to reconnect to Peplink router")
-                        return {"connection": []}
-                    
-                    # Retry the request with the new session
-                    session = await self._get_session()
-                    async with session.get(wan_url) as retry_response:
-                        retry_response.raise_for_status()
-                        wan_data = await retry_response.json()
-                else:
-                    response.raise_for_status()
-                    wan_data = await response.json()
+            response = await self._api_request(wan_url)
+            
+            _LOGGER.debug("Raw WAN data from router: %s", response)
                 
-                _LOGGER.debug("Raw WAN data from router: %s", wan_data)
-                
-                # Check for error response
-                if "stat" in wan_data and wan_data["stat"] == "fail":
-                    _LOGGER.error("API error: %s (code: %s)", 
-                                 wan_data.get("message", "Unknown error"), 
-                                 wan_data.get("code", "Unknown"))
-                    return {"connection": []}
-                
-                # Handle different response formats
-                if "stat" in wan_data and wan_data["stat"] == "ok":
-                    if "response" in wan_data:
-                        response_data = wan_data["response"]
-                        
-                        # Extract WAN interfaces (numeric keys)
-                        wans = []
-                        for key, value in response_data.items():
-                            # Skip non-WAN keys like 'order' or 'supportGatewayProxy'
-                            if isinstance(key, str) and key.isdigit():
-                                # Add the WAN ID to each WAN object
-                                value["id"] = key
-                                value["name"] = value.get("name", f"WAN {key}")
-                                value["status"] = value.get("status", "unknown")
-                                wans.append(value)
-                        
-                        _LOGGER.debug("Processed %d WAN interfaces", len(wans))
-                        return {"connection": wans}
-                
-                # Handle alternative format where WAN data is directly in the response
-                if "connection" in wan_data:
-                    _LOGGER.debug("Found 'connection' key in WAN data")
-                    return wan_data
-                
-                _LOGGER.warning("Unexpected WAN data format: %s", wan_data)
+            # Check for error response
+            if "stat" in response and response["stat"] == "fail":
+                _LOGGER.error("API error: %s (code: %s)", 
+                             response.get("message", "Unknown error"), 
+                             response.get("code", "Unknown"))
                 return {"connection": []}
+                
+            # Handle different response formats
+            if "stat" in response and response["stat"] == "ok":
+                if "response" in response:
+                    response_data = response["response"]
+                    
+                    # Extract WAN interfaces (numeric keys)
+                    wans = []
+                    for key, value in response_data.items():
+                        # Skip non-WAN keys like 'order' or 'supportGatewayProxy'
+                        if isinstance(key, str) and key.isdigit():
+                            # Add the WAN ID to each WAN object
+                            value["id"] = key
+                            value["name"] = value.get("name", f"WAN {key}")
+                            value["status"] = value.get("status", "unknown")
+                            wans.append(value)
+                    
+                    _LOGGER.debug("Processed %d WAN interfaces", len(wans))
+                    return {"connection": wans}
+            
+            # Handle alternative format where WAN data is directly in the response
+            if "connection" in response:
+                _LOGGER.debug("Found 'connection' key in WAN data")
+                return response
+            
+            _LOGGER.warning("Unexpected WAN data format: %s", response)
+            return {"connection": []}
                     
         except aiohttp.ClientError as e:
             _LOGGER.error("Error retrieving WAN status: %s", e)
@@ -280,54 +311,38 @@ class PeplinkAPI:
         
         try:
             _LOGGER.debug("Requesting client status from %s", clients_url)
-            async with session.get(clients_url) as response:
-                # If we get a 401, try to reconnect once
-                if response.status == 401:
-                    _LOGGER.warning("Authentication expired, attempting to reconnect")
-                    self._connected = False
-                    if not await self.connect():
-                        _LOGGER.error("Failed to reconnect to Peplink router")
-                        return {"client": []}
-                    
-                    # Retry the request with the new session
-                    session = await self._get_session()
-                    async with session.get(clients_url) as retry_response:
-                        retry_response.raise_for_status()
-                        clients_data = await retry_response.json()
-                else:
-                    response.raise_for_status()
-                    clients_data = await response.json()
+            response = await self._api_request(clients_url)
+            
+            _LOGGER.debug("Raw client data from router: %s", response)
                 
-                _LOGGER.debug("Raw client data from router: %s", clients_data)
-                
-                # Check for error response
-                if "stat" in clients_data and clients_data["stat"] == "fail":
-                    _LOGGER.error("API error: %s (code: %s)", 
-                                 clients_data.get("message", "Unknown error"), 
-                                 clients_data.get("code", "Unknown"))
-                    return {"client": []}
-                
-                # Handle different response formats
-                if "stat" in clients_data and clients_data["stat"] == "ok":
-                    if "response" in clients_data:
-                        if "list" in clients_data["response"]:
-                            clients = clients_data["response"]["list"]
-                            for client in clients:
-                                # Ensure each client has the required fields
-                                client["connected"] = True  # If it's in the list, it's connected
-                                client["mac"] = client.get("mac", "unknown")
-                                client["name"] = client.get("name", client.get("hostname", "Unknown Device"))
-                            
-                            _LOGGER.debug("Processed %d clients", len(clients))
-                            return {"client": clients}
-                
-                # Handle alternative format where client data is directly in the response
-                if "client" in clients_data:
-                    _LOGGER.debug("Found 'client' key in client data")
-                    return clients_data
-                
-                _LOGGER.warning("Unexpected client data format: %s", clients_data)
+            # Check for error response
+            if "stat" in response and response["stat"] == "fail":
+                _LOGGER.error("API error: %s (code: %s)", 
+                             response.get("message", "Unknown error"), 
+                             response.get("code", "Unknown"))
                 return {"client": []}
+                
+            # Handle different response formats
+            if "stat" in response and response["stat"] == "ok":
+                if "response" in response:
+                    if "list" in response["response"]:
+                        clients = response["response"]["list"]
+                        for client in clients:
+                            # Ensure each client has the required fields
+                            client["connected"] = True  # If it's in the list, it's connected
+                            client["mac"] = client.get("mac", "unknown")
+                            client["name"] = client.get("name", client.get("hostname", "Unknown Device"))
+                        
+                        _LOGGER.debug("Processed %d clients", len(clients))
+                        return {"client": clients}
+            
+            # Handle alternative format where client data is directly in the response
+            if "client" in response:
+                _LOGGER.debug("Found 'client' key in client data")
+                return response
+            
+            _LOGGER.warning("Unexpected client data format: %s", response)
+            return {"client": []}
                     
         except aiohttp.ClientError as e:
             _LOGGER.error("Error retrieving client information: %s", e)
@@ -336,9 +351,159 @@ class PeplinkAPI:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
     
+    async def get_thermal_sensors(self) -> Dict[str, Any]:
+        """
+        Retrieve thermal sensor data from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing thermal sensor information
+                 Format: {"sensors": [{"name": str, "temperature": float, "unit": str, "min": float, "max": float, "threshold": float}]}
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"sensors": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=thermalSensor&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting thermal sensor data from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw thermal sensor data from router: %s", response)
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                sensors = []
+                for sensor in response["response"].get("thermalSensor", []):
+                    sensors.append({
+                        "name": "System",  # Only one sensor per device
+                        "temperature": float(sensor.get("temperature", 0)),
+                        "unit": "C",
+                        "min": float(sensor.get("min", -30)),
+                        "max": float(sensor.get("max", 110)),
+                        "threshold": float(sensor.get("threshold", 30))
+                    })
+                return {"sensors": sensors}
+            else:
+                _LOGGER.warning("Unexpected thermal sensor data format: %s", response)
+                return {"sensors": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching thermal sensor data: %s", e)
+            return {"sensors": []}
+
+    async def get_fan_speeds(self) -> Dict[str, Any]:
+        """
+        Retrieve fan speed data from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing fan speed information
+                 Format: {"fans": [{"name": str, "speed": int, "unit": str, "max_speed": int, "percentage": float}]}
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"fans": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=fanSpeed&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting fan speed data from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw fan speed data from router: %s", response)
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                fans = []
+                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                    if fan.get("active", False):
+                        fans.append({
+                            "name": f"Fan {i}",
+                            "speed": int(fan.get("value", 0)),
+                            "unit": "RPM",
+                            "max_speed": int(fan.get("total", 17000)),
+                            "percentage": float(fan.get("percentage", 0))
+                        })
+                return {"fans": fans}
+            else:
+                _LOGGER.warning("Unexpected fan speed data format: %s", response)
+                return {"fans": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching fan speed data: %s", e)
+            return {"fans": []}
+
+    async def get_traffic_stats(self) -> Dict[str, Any]:
+        """
+        Retrieve traffic statistics from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing traffic statistics for each WAN interface
+                 Format: {
+                     "stats": [{
+                         "wan_id": str,
+                         "name": str,
+                         "rx_bytes": int,
+                         "tx_bytes": int,
+                         "rx_rate": int,
+                         "tx_rate": int,
+                         "unit": str
+                     }]
+                 }
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"stats": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.traffic&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting traffic statistics from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw traffic statistics from router: %s", response)
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                stats = []
+                traffic_data = response["response"].get("traffic", {})
+                bandwidth_data = response["response"].get("bandwidth", {})
+                
+                # Get the list of WAN IDs in order
+                wan_ids = traffic_data.get("order", [])
+                
+                for wan_id in wan_ids:
+                    wan_id_str = str(wan_id)
+                    traffic = traffic_data.get(wan_id_str, {})
+                    bandwidth = bandwidth_data.get(wan_id_str, {})
+                    
+                    if traffic and bandwidth:
+                        stats.append({
+                            "wan_id": wan_id_str,
+                            "name": traffic.get("name", f"WAN {wan_id}"),
+                            "rx_bytes": int(traffic.get("overall", {}).get("download", 0)) * 1024 * 1024,  # Convert MB to bytes
+                            "tx_bytes": int(traffic.get("overall", {}).get("upload", 0)) * 1024 * 1024,    # Convert MB to bytes
+                            "rx_rate": int(bandwidth.get("overall", {}).get("download", 0)) * 1024,        # Convert kbps to bps
+                            "tx_rate": int(bandwidth.get("overall", {}).get("upload", 0)) * 1024,          # Convert kbps to bps
+                            "unit": "bytes"
+                        })
+                
+                return {"stats": stats}
+            else:
+                _LOGGER.warning("Unexpected traffic statistics format: %s", response)
+                return {"stats": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching traffic statistics: %s", e)
+            return {"stats": []}
+
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
             await self._session.close()
             self._session = None
             self._own_session = False
+            self._connected = False

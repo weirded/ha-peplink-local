@@ -1,112 +1,104 @@
 """Config flow for Peplink Local integration."""
+from __future__ import annotations
+
 import logging
+from typing import Any
+
 import voluptuous as vol
-import ssl
-import aiohttp
-import asyncio
-from functools import partial
 
 from homeassistant import config_entries
+from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
-from homeassistant.helpers.aiohttp_client import async_create_clientsession, async_get_clientsession
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .peplink_api import PeplinkAPI
-from .const import DOMAIN, CONF_VERIFY_SSL
+from .const import DOMAIN
+from .peplink_api import PeplinkAPI, PeplinkAuthFailed, PeplinkSSLError
 
 _LOGGER = logging.getLogger(__name__)
 
+STEP_USER_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HOST): str,
+        vol.Required(CONF_USERNAME): str,
+        vol.Required(CONF_PASSWORD): str,
+        vol.Optional(CONF_VERIFY_SSL, default=True): bool,
+    }
+)
 
-def _create_insecure_ssl_context():
-    """Create an insecure SSL context (non-blocking function)."""
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    return ssl_context
+
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the user input allows us to connect."""
+    host = data[CONF_HOST]
+    username = data[CONF_USERNAME]
+    password = data[CONF_PASSWORD]
+    verify_ssl = data.get(CONF_VERIFY_SSL, True)
+
+    # Get the session with appropriate SSL settings
+    session = async_get_clientsession(hass, verify_ssl=verify_ssl)
+
+    try:
+        # Test the connection
+        client = PeplinkAPI(
+            host=host,
+            username=username,
+            password=password,
+            session=session,
+            verify_ssl=verify_ssl
+        )
+
+        if not await client.connect():
+            raise PeplinkAuthFailed
+    except PeplinkAuthFailed as err:
+        raise PeplinkAuthFailed from err
+    except PeplinkSSLError as err:
+        # Catch and re-raise SSL errors separately
+        raise PeplinkSSLError from err
+    except Exception as e:
+        _LOGGER.exception("Unexpected exception: %s", e)
+        raise
+
+    # Return info to be stored in the config entry
+    return {"title": f"Peplink Router ({data[CONF_HOST]})"}
 
 
-class PeplinkLocalFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
+class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Peplink Local."""
 
     VERSION = 1
-    CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle the initial step."""
-        errors = {}
+        errors: dict[str, str] = {}
+
+        # Use user_input as defaults if provided, otherwise empty dict
+        defaults = user_input or {}
+        
+        # Create a dynamic schema that uses the previous input as defaults
+        schema = vol.Schema({
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): str,
+            vol.Optional(CONF_VERIFY_SSL, default=defaults.get(CONF_VERIFY_SSL, True)): bool,
+        })
 
         if user_input is not None:
-            host = user_input[CONF_HOST]
-            username = user_input[CONF_USERNAME]
-            password = user_input[CONF_PASSWORD]
-            verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
-
-            # Check if already configured
-            await self.async_set_unique_id(f"{host}")
-            self._abort_if_unique_id_configured()
-
-            # Create a session with the appropriate SSL settings
-            if not verify_ssl:
-                # Create SSL context in a non-blocking way
-                loop = asyncio.get_running_loop()
-                ssl_context = await loop.run_in_executor(
-                    None, 
-                    partial(_create_insecure_ssl_context)
-                )
-                
-                # Create a connector with the SSL context
-                connector = aiohttp.TCPConnector(ssl=ssl_context)
-                
-                # Create a session with a cookie jar and the custom connector
-                cookie_jar = aiohttp.CookieJar(unsafe=True)
-                session = aiohttp.ClientSession(connector=connector, cookie_jar=cookie_jar)
-            else:
-                # Use the Home Assistant session with default cookie jar
-                session = async_get_clientsession(self.hass)
-
-            # Test the connection
-            client = PeplinkAPI(
-                router_ip=host,
-                username=username,
-                password=password,
-                session=session,
-                verify_ssl=verify_ssl
-            )
-
             try:
-                if await client.connect():
-                    # Connection successful, create entry
-                    return self.async_create_entry(
-                        title=f"Peplink Router ({host})",
-                        data={
-                            CONF_HOST: host,
-                            CONF_USERNAME: username,
-                            CONF_PASSWORD: password,
-                            CONF_VERIFY_SSL: verify_ssl,
-                        },
-                    )
-                else:
-                    errors["base"] = "cannot_connect"
-            except Exception as e:
-                _LOGGER.exception("Unexpected exception: %s", e)
+                info = await validate_input(self.hass, user_input)
+            except PeplinkAuthFailed:
+                errors["base"] = "invalid_auth"
+            except PeplinkSSLError:
+                errors["base"] = "ssl_error"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
-            finally:
-                # Only close the session if we created it
-                if not verify_ssl:
-                    await session.close()
+            else:
+                return self.async_create_entry(title=info["title"], data=user_input)
 
-        # Show the form
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST): str,
-                    vol.Required(CONF_USERNAME): str,
-                    vol.Required(CONF_PASSWORD): str,
-                    vol.Optional(CONF_VERIFY_SSL, default=True): bool,
-                }
-            ),
-            errors=errors,
+            step_id="user", data_schema=schema, errors=errors
         )
 
     @staticmethod

@@ -1,173 +1,182 @@
 """The Peplink Local integration."""
+from __future__ import annotations
+
 import asyncio
 import logging
-import ssl
-import aiohttp
 from datetime import timedelta
-from functools import partial
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD, Platform
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    CONF_VERIFY_SSL,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 
-from .const import DOMAIN, CONF_VERIFY_SSL, SCAN_INTERVAL
-from .peplink_api import PeplinkAPI
+from .const import DOMAIN, SCAN_INTERVAL
+from .peplink_api import PeplinkAPI, PeplinkAuthFailed
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.DEVICE_TRACKER]
+PLATFORMS: list[Platform] = [Platform.DEVICE_TRACKER, Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
-async def async_setup(hass: HomeAssistant, config: dict):
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Peplink Local component."""
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Peplink Local from a config entry."""
     host = entry.data[CONF_HOST]
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
 
-    hass.data.setdefault(DOMAIN, {})
+    session = async_get_clientsession(hass, verify_ssl=verify_ssl)
 
-    # Create a session with the appropriate SSL settings
-    if not verify_ssl:
-        # Create SSL context in a non-blocking way
-        loop = asyncio.get_running_loop()
-        ssl_context = await loop.run_in_executor(
-            None, 
-            partial(_create_insecure_ssl_context)
-        )
-        
-        # Create a connector with the SSL context
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        
-        # Create a session with a cookie jar and the custom connector
-        cookie_jar = aiohttp.CookieJar(unsafe=True)
-        session = aiohttp.ClientSession(connector=connector, cookie_jar=cookie_jar)
-    else:
-        # Use the Home Assistant session
-        session = async_get_clientsession(hass)
-
-    # Create API client
-    client = PeplinkAPI(
-        router_ip=host, 
-        username=username, 
-        password=password, 
+    api = PeplinkAPI(
+        host=host,
+        username=username,
+        password=password,
         session=session,
-        verify_ssl=verify_ssl
+        verify_ssl=verify_ssl,
     )
 
-    # Test connection
     try:
-        if not await client.connect():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return False
-    except Exception as e:
-        _LOGGER.error("Error connecting to Peplink router: %s", e)
-        return False
+        if not await api.connect():
+            raise ConfigEntryAuthFailed("Failed to connect to Peplink router")
 
-    async def async_update_data():
-        """Fetch data from API endpoint."""
-        try:
-            # Get WAN status
-            _LOGGER.debug("Fetching WAN status from Peplink router")
-            wan_data = await client.get_wan_status()
-            _LOGGER.debug("Received WAN data: %s", wan_data)
-            
-            # Get client information
-            _LOGGER.debug("Fetching client information from Peplink router")
-            client_data = await client.get_clients()
-            _LOGGER.debug("Received client data: %s", client_data)
-            
-            # Check if we have valid data
-            if (not wan_data or not wan_data.get("connection")) and (not client_data or not client_data.get("client")):
-                _LOGGER.warning("No data received from Peplink router")
-                # Return empty data structure to avoid errors
-                return {
-                    "wan": {"connection": []},
-                    "clients": {"client": []}
-                }
-            
-            # Return the data in the expected format
-            return {
-                "wan": wan_data,
-                "clients": client_data
-            }
-            
-        except Exception as e:
-            _LOGGER.error("Error fetching data from Peplink router: %s", e)
-            raise UpdateFailed(f"Error fetching data: {e}")
+        coordinator = PeplinkDataUpdateCoordinator(
+            hass=hass,
+            logger=_LOGGER,
+            name=f"Peplink {host}",
+            update_interval=timedelta(seconds=SCAN_INTERVAL),
+            api=api,
+            config_entry=entry,
+        )
 
-    # Create update coordinator
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=f"{DOMAIN}_{host}",
-        update_method=async_update_data,
-        update_interval=timedelta(seconds=SCAN_INTERVAL),
-    )
+        await coordinator.async_config_entry_first_refresh()
 
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            "coordinator": coordinator,
+            "api": api,
+        }
 
-    # Store coordinator and client in hass data
-    hass.data[DOMAIN][entry.entry_id] = {
-        "coordinator": coordinator,
-        "client": client,
-    }
+        device_registry = dr.async_get(hass)
+        device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"Peplink Router ({host})",
+            manufacturer="Peplink",
+            model="Router",
+        )
 
-    # Register the main router device
-    device_registry = async_get_device_registry(hass)
-    device_registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=f"Peplink Router ({host})",
-        manufacturer="Peplink",
-        model="Router",
-    )
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Set up all platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        return True
 
-    return True
+    except PeplinkAuthFailed as err:
+        raise ConfigEntryAuthFailed from err
+    except Exception as err:
+        _LOGGER.exception("Error setting up Peplink integration")
+        raise ConfigEntryNotReady(f"Failed to connect: {err}") from err
 
 
-def _create_insecure_ssl_context():
-    """Create an insecure SSL context (non-blocking function)."""
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    
-    if unload_ok:
-        # Clean up resources
-        if entry.entry_id in hass.data[DOMAIN]:
-            client = hass.data[DOMAIN][entry.entry_id].get("client")
-            if client:
-                await client.close()
-            
-            # Remove the entry data
-            hass.data[DOMAIN].pop(entry.entry_id)
-            
-            # If no more entries, remove the domain data
-            if not hass.data[DOMAIN]:
-                hass.data.pop(DOMAIN)
-    
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        data = hass.data[DOMAIN].pop(entry.entry_id)
+        api = data["api"]
+        await api.close()
+
     return unload_ok
 
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry."""
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)
+
+
+class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Class to manage fetching data from the API."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        logger: logging.Logger,
+        name: str,
+        update_interval: timedelta,
+        api: PeplinkAPI,
+        config_entry: ConfigEntry,
+    ) -> None:
+        """Initialize."""
+        super().__init__(
+            hass,
+            logger,
+            name=name,
+            update_interval=update_interval,
+        )
+        self.api = api
+        self.config_entry = config_entry
+        self.host = config_entry.data[CONF_HOST]
+        self.model = "Router"  # Can be updated later if the API provides model info
+        self.firmware = "Unknown"  # Can be updated later if the API provides firmware info
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Update data via API."""
+        try:
+            # Ensure we're connected
+            if not await self.api.ensure_connected():
+                raise UpdateFailed("Failed to connect to Peplink router")
+
+            # Parallelize API calls using asyncio.gather
+            results = await asyncio.gather(
+                self.api.get_wan_status(),
+                self.api.get_clients(),
+                self.api.get_thermal_sensors(),
+                self.api.get_fan_speeds(),
+                self.api.get_traffic_stats(),
+                return_exceptions=True,
+            )
+            
+            # Check results for exceptions
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    api_calls = ["WAN status", "client information", "thermal sensor data", 
+                                "fan speed data", "traffic statistics"]
+                    raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
+                
+            # Unpack results
+            wan_status, clients, thermal_sensors, fan_speeds, traffic_stats = results
+            
+            # Validate results
+            if not wan_status:
+                raise UpdateFailed("Failed to get WAN status")
+            if not clients:
+                raise UpdateFailed("Failed to get client information")
+            if not thermal_sensors:
+                raise UpdateFailed("Failed to get thermal sensor data")
+            if not fan_speeds:
+                raise UpdateFailed("Failed to get fan speed data")
+            if not traffic_stats:
+                raise UpdateFailed("Failed to get traffic statistics")
+
+            return {
+                "wan_status": wan_status,
+                "clients": clients,
+                "thermal_sensors": thermal_sensors,
+                "fan_speeds": fan_speeds,
+                "traffic_stats": traffic_stats,
+            }
+        except Exception as err:
+            raise UpdateFailed(f"Error communicating with API: {err}")
