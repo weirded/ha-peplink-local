@@ -18,6 +18,11 @@ This custom integration allows you to monitor and track your Peplink router from
   - Connection type (text sensor)
   - Priority (numeric sensor)
   - Up since timestamp (timestamp sensor)
+  - Download speed (data rate sensor)
+  - Upload speed (data rate sensor)
+- **Router Sensors**:
+  - CPU temperature (temperature sensor)
+  - Fan speeds (speed sensors)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
 - **Local Communication**: Communicates directly with your Peplink router over your local network
 
@@ -75,13 +80,29 @@ For each enabled WAN interface (e.g., WAN1), the following entities are created:
 | `sensor.wan1_connection_type` | Sensor | Type of connection (Ethernet, Cellular, etc.) |
 | `sensor.wan1_priority` | Sensor | Priority of the WAN interface for routing |
 | `sensor.wan1_up_since` | Timestamp | When the WAN interface was last connected/up since |
+| `sensor.wan1_download_speed` | Data Rate | Current download speed in kilobits per second |
+| `sensor.wan1_upload_speed` | Data Rate | Current upload speed in kilobits per second |
 
-Additionally, device tracker entities are created for each client connected to your Peplink router.
+Additionally, the following router-specific sensors are created:
 
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.cpu_temperature` | Temperature | CPU temperature in degrees Celsius |
+| `sensor.fan_1_speed` | Speed | Speed of the first fan in RPM (if available) |
+| `sensor.fan_2_speed` | Speed | Speed of the second fan in RPM (if available) |
+
+Device tracker entities are also created for each client connected to your Peplink router.
 
 ## Data Refresh
 
-The integration refreshes data from your Peplink router every 30 seconds.
+The integration refreshes most data from your Peplink router every 30 seconds. 
+
+However, the following data is refreshed more frequently (every 5 seconds):
+- CPU temperature
+- Fan speeds
+- Download and upload speeds
+
+This provides near real-time monitoring of system performance and network traffic.
 
 ## API Documentation
 
