@@ -43,14 +43,14 @@ _LOGGER = logging.getLogger(__name__)
 class PeplinkSensorEntityDescription(SensorEntityDescription):
     """Class describing Peplink sensor entities."""
 
-    value_fn: Callable[[Any], StateType] | None = None
+    value_fn: Callable[[dict], Any] | None = None
 
 
 @dataclass
 class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class describing Peplink binary sensor entities."""
 
-    value_fn: Callable[[Any], bool] | None = None
+    value_fn: Callable[[dict], Any] | None = None
 
 
 SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
@@ -212,6 +212,8 @@ async def async_setup_entry(
                         native_unit_of_measurement=description.native_unit_of_measurement,
                         device_class=description.device_class,
                         state_class=description.state_class,
+                        # Add appropriate icons for upload and download
+                        icon="mdi:arrow-down-bold" if description.key == "wan_download_rate" else "mdi:arrow-up-bold",
                         value_fn=description.value_fn,
                     )
                     entities.append(
@@ -237,6 +239,7 @@ async def async_setup_entry(
                             native_unit_of_measurement=description.native_unit_of_measurement,
                             device_class=description.device_class,
                             state_class=description.state_class,
+                            icon="mdi:server-network",
                             value_fn=description.value_fn,
                         )
                         entities.append(
