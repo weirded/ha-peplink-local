@@ -12,6 +12,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 from functools import partial
+import time
 
 import aiohttp
 
@@ -55,9 +56,10 @@ class PeplinkAPI:
         self._connected = False
         self._own_session = False
         self._cookie_jar = None
+        self._auth_cookie = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create an aiohttp session."""
+        """Get the current session or create a new one."""
         if self._session is None:
             # Create a session with the appropriate SSL settings
             if not self.verify_ssl:
@@ -86,6 +88,10 @@ class PeplinkAPI:
                 
             self._own_session = True
             
+        # Add the authentication cookie to all requests
+        if self._auth_cookie:
+            self._session.cookie_jar.update_cookies({'bauth': self._auth_cookie})
+
         return self._session
 
     async def connect(self) -> bool:
@@ -152,6 +158,9 @@ class PeplinkAPI:
                         cookie = {'session_id': login_result['session_id']}
                         _LOGGER.debug("Setting session cookie: %s", cookie)
                         session.cookie_jar.update_cookies(cookie, response.url)
+                    
+                # Store the authentication cookie
+                self._auth_cookie = cookies.get('bauth', None)
                     
         except aiohttp.ClientError as e:
             _LOGGER.error("Error during login: %s", e)
@@ -336,9 +345,159 @@ class PeplinkAPI:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
     
+    async def get_thermal_sensors(self) -> Dict[str, Any]:
+        """
+        Retrieve thermal sensor data from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing thermal sensor information
+                 Format: {"sensors": [{"name": str, "temperature": float, "unit": str, "min": float, "max": float, "threshold": float}]}
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"sensors": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=thermalSensor&_={int(time.time() * 1000)}")
+        
+        try:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                _LOGGER.debug("Raw thermal sensor data from router: %s", data)
+                
+                # Process the response
+                if data.get("stat") == "ok" and "response" in data:
+                    sensors = []
+                    for sensor in data["response"].get("thermalSensor", []):
+                        sensors.append({
+                            "name": "System",  # Only one sensor per device
+                            "temperature": float(sensor.get("temperature", 0)),
+                            "unit": "C",
+                            "min": float(sensor.get("min", -30)),
+                            "max": float(sensor.get("max", 110)),
+                            "threshold": float(sensor.get("threshold", 30))
+                        })
+                    return {"sensors": sensors}
+                else:
+                    _LOGGER.warning("Unexpected thermal sensor data format: %s", data)
+                    return {"sensors": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching thermal sensor data: %s", e)
+            return {"sensors": []}
+
+    async def get_fan_speeds(self) -> Dict[str, Any]:
+        """
+        Retrieve fan speed data from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing fan speed information
+                 Format: {"fans": [{"name": str, "speed": int, "unit": str, "max_speed": int, "percentage": float}]}
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"fans": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=fanSpeed&_={int(time.time() * 1000)}")
+        
+        try:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                _LOGGER.debug("Raw fan speed data from router: %s", data)
+                
+                # Process the response
+                if data.get("stat") == "ok" and "response" in data:
+                    fans = []
+                    for i, fan in enumerate(data["response"].get("fanSpeed", []), 1):
+                        if fan.get("active", False):
+                            fans.append({
+                                "name": f"Fan {i}",
+                                "speed": int(fan.get("value", 0)),
+                                "unit": "RPM",
+                                "max_speed": int(fan.get("total", 17000)),
+                                "percentage": float(fan.get("percentage", 0))
+                            })
+                    return {"fans": fans}
+                else:
+                    _LOGGER.warning("Unexpected fan speed data format: %s", data)
+                    return {"fans": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching fan speed data: %s", e)
+            return {"fans": []}
+
+    async def get_traffic_stats(self) -> Dict[str, Any]:
+        """
+        Retrieve traffic statistics from the router using undocumented API.
+        
+        Returns:
+            dict: Dictionary containing traffic statistics for each WAN interface
+                 Format: {
+                     "stats": [{
+                         "wan_id": str,
+                         "name": str,
+                         "rx_bytes": int,
+                         "tx_bytes": int,
+                         "rx_rate": int,
+                         "tx_rate": int,
+                         "unit": str
+                     }]
+                 }
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"stats": []}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.traffic&_={int(time.time() * 1000)}")
+        
+        try:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                _LOGGER.debug("Raw traffic statistics from router: %s", data)
+                
+                # Process the response
+                if data.get("stat") == "ok" and "response" in data:
+                    stats = []
+                    traffic_data = data["response"].get("traffic", {})
+                    bandwidth_data = data["response"].get("bandwidth", {})
+                    
+                    # Get the list of WAN IDs in order
+                    wan_ids = traffic_data.get("order", [])
+                    
+                    for wan_id in wan_ids:
+                        wan_id_str = str(wan_id)
+                        traffic = traffic_data.get(wan_id_str, {})
+                        bandwidth = bandwidth_data.get(wan_id_str, {})
+                        
+                        if traffic and bandwidth:
+                            stats.append({
+                                "wan_id": wan_id_str,
+                                "name": traffic.get("name", f"WAN {wan_id}"),
+                                "rx_bytes": int(traffic.get("overall", {}).get("download", 0)) * 1024 * 1024,  # Convert MB to bytes
+                                "tx_bytes": int(traffic.get("overall", {}).get("upload", 0)) * 1024 * 1024,    # Convert MB to bytes
+                                "rx_rate": int(bandwidth.get("overall", {}).get("download", 0)) * 1024,        # Convert kbps to bps
+                                "tx_rate": int(bandwidth.get("overall", {}).get("upload", 0)) * 1024,          # Convert kbps to bps
+                                "unit": "bytes"
+                            })
+                    
+                    return {"stats": stats}
+                else:
+                    _LOGGER.warning("Unexpected traffic statistics format: %s", data)
+                    return {"stats": []}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching traffic statistics: %s", e)
+            return {"stats": []}
+
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
             await self._session.close()
             self._session = None
             self._own_session = False
+            self._connected = False

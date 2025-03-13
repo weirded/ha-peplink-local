@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import only the API client directly
-from custom_components.peplink_local.api.client import PeplinkAPI
+from custom_components.peplink_local.peplink_api import PeplinkAPI
 
 # Import dotenv for loading environment variables
 try:
