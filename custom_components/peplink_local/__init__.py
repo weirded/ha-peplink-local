@@ -16,6 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -55,7 +56,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise ConfigEntryAuthFailed("Failed to connect to Peplink router")
 
         coordinator = PeplinkDataUpdateCoordinator(
-            hass, _LOGGER, api, entry
+            hass=hass,
+            logger=_LOGGER,
+            name=f"Peplink {host}",
+            update_interval=timedelta(seconds=SCAN_INTERVAL),
+            api=api,
+            config_entry=entry,
         )
 
         await coordinator.async_config_entry_first_refresh()
@@ -65,7 +71,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "api": api,
         }
 
-        device_registry = await hass.helpers.device_registry.async_get_registry()
+        device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, entry.entry_id)},
@@ -108,6 +114,8 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         hass: HomeAssistant,
         logger: logging.Logger,
+        name: str,
+        update_interval: timedelta,
         api: PeplinkAPI,
         config_entry: ConfigEntry,
     ) -> None:
@@ -115,8 +123,8 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             hass,
             logger,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=SCAN_INTERVAL),
+            name=name,
+            update_interval=update_interval,
         )
         self.api = api
         self.config_entry = config_entry

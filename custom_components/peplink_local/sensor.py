@@ -11,15 +11,19 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.components.binary_sensor import (
+    BinarySensorEntity,
+    BinarySensorEntityDescription,
+    BinarySensorDeviceClass,
+)
 from homeassistant.const import (
     PERCENTAGE,
     REVOLUTIONS_PER_MINUTE,
     UnitOfTemperature,
     UnitOfDataRate,
-    UnitOfInformation,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import (
@@ -42,6 +46,13 @@ class PeplinkSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[Any], StateType] | None = None
 
 
+@dataclass
+class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
+    """Class describing Peplink binary sensor entities."""
+
+    value_fn: Callable[[Any], bool] | None = None
+
+
 SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
     # System sensors
     PeplinkSensorEntityDescription(
@@ -51,7 +62,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("temperature"),
+        value_fn=lambda x: x.get("value"),
     ),
     PeplinkSensorEntityDescription(
         key="system_temperature_threshold",
@@ -59,81 +70,56 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         name="System Temperature Threshold",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda x: x.get("threshold"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="fan_1_speed",
-        translation_key=None,
-        name="Fan 1 Speed",
-        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
-        device_class=None,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("speed"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="fan_1_percentage",
-        translation_key=None,
-        name="Fan 1 Percentage",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=None,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("percentage"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="fan_2_speed",
-        translation_key=None,
-        name="Fan 2 Speed",
-        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
-        device_class=None,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("speed"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="fan_2_percentage",
-        translation_key=None,
-        name="Fan 2 Percentage",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=None,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("percentage"),
     ),
     # WAN traffic sensors - these will be created dynamically per WAN
     PeplinkSensorEntityDescription(
-        key="wan_rx_bytes",
+        key="wan_download_rate",
         translation_key=None,
-        name="WAN Received",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda x: x.get("rx_bytes"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="wan_tx_bytes",
-        translation_key=None,
-        name="WAN Sent",
-        native_unit_of_measurement=UnitOfInformation.BYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda x: x.get("tx_bytes"),
-    ),
-    PeplinkSensorEntityDescription(
-        key="wan_rx_rate",
-        translation_key=None,
-        name="WAN Receive Rate",
+        name="Download",
         native_unit_of_measurement=UnitOfDataRate.BITS_PER_SECOND,
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda x: x.get("rx_rate"),
     ),
     PeplinkSensorEntityDescription(
-        key="wan_tx_rate",
+        key="wan_upload_rate",
         translation_key=None,
-        name="WAN Send Rate",
+        name="Upload",
         native_unit_of_measurement=UnitOfDataRate.BITS_PER_SECOND,
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda x: x.get("tx_rate"),
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_status",
+        translation_key=None,
+        name="Status",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("message"),
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_type",
+        translation_key=None,
+        name="Type",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("type"),
+    ),
+)
+
+BINARY_SENSOR_TYPES: tuple[PeplinkBinarySensorEntityDescription, ...] = (
+    PeplinkBinarySensorEntityDescription(
+        key="wan_connected",
+        translation_key=None,
+        name="Connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda x: x.get("message") == "Connected",
     ),
 )
 
@@ -146,7 +132,7 @@ async def async_setup_entry(
     """Set up the Peplink sensors."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
 
-    entities: list[PeplinkSensor] = []
+    entities = []
 
     # Add system sensors
     thermal_sensors = coordinator.data.get("thermal_sensors", {})
@@ -166,43 +152,125 @@ async def async_setup_entry(
     if coordinator.data.get("fan_speeds", {}).get("fans"):
         fans = coordinator.data["fan_speeds"]["fans"]
         for fan_num, fan in enumerate(fans, 1):
-            for description in SENSOR_TYPES:
-                if description.key in [f"fan_{fan_num}_speed", f"fan_{fan_num}_percentage"]:
-                    entities.append(
-                        PeplinkSensor(
-                            coordinator=coordinator,
-                            description=description,
-                            sensor_data=fan,
-                        )
-                    )
+            # Dynamically create a fan speed sensor for each fan
+            fan_speed_description = PeplinkSensorEntityDescription(
+                key=f"fan_{fan_num}_speed",
+                translation_key=None,
+                name=f"Fan {fan_num} Speed",
+                native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
+                device_class=None,
+                state_class=SensorStateClass.MEASUREMENT,
+                value_fn=lambda x: x.get("speed"),
+            )
+            entities.append(
+                PeplinkSensor(
+                    coordinator=coordinator,
+                    description=fan_speed_description,
+                    sensor_data=fan,
+                )
+            )
 
     # Add WAN traffic sensors
     if coordinator.data.get("traffic_stats", {}).get("stats"):
-        for wan in coordinator.data["traffic_stats"]["stats"]:
+        wan_stats = coordinator.data["traffic_stats"]["stats"]
+        
+        # Get the WAN status data
+        wan_connections = coordinator.data.get("wan_connections", {})
+        
+        for wan in wan_stats:
+            wan_id = wan['wan_id']
+            wan_name = wan['name']
+            
+            # Create device info for this WAN
+            device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{coordinator.config_entry.entry_id}_wan{wan_id}")},
+                manufacturer="Peplink",
+                model="WAN Connection",
+                name=f"WAN{wan_id} ({wan_name})",
+                via_device=(DOMAIN, coordinator.config_entry.entry_id),
+            )
+            
+            # Find matching WAN connection data
+            wan_connection = None
+            if wan_connections:
+                for wan_conn_id, wan_conn_data in wan_connections.items():
+                    if str(wan_conn_id) == str(wan_id):
+                        wan_connection = wan_conn_data
+                        break
+            
+            # Create traffic rate sensors
             for description in SENSOR_TYPES:
-                if description.key.startswith("wan_"):
+                if description.key.startswith("wan_") and description.key in ["wan_download_rate", "wan_upload_rate"]:
                     # Create a copy of the description for this specific WAN
-                    wan_description = PeplinkSensorEntityDescription(
-                        key=f"{description.key}_{wan['wan_id']}",
-                        translation_key=None,
-                        name=f"{wan['name']} {description.name}",
+                    sensor_description = PeplinkSensorEntityDescription(
+                        key=f"{description.key.replace('wan_', '')}",
+                        translation_key=description.translation_key,
+                        name=description.name,
                         native_unit_of_measurement=description.native_unit_of_measurement,
                         device_class=description.device_class,
                         state_class=description.state_class,
                         value_fn=description.value_fn,
                     )
                     entities.append(
-                        PeplinkSensor(
+                        PeplinkWANSensor(
                             coordinator=coordinator,
-                            description=wan_description,
+                            description=sensor_description,
                             sensor_data=wan,
+                            device_info=device_info,
+                            wan_id=wan_id,
                         )
                     )
+            
+            # Add status and type sensors if WAN connection data is available
+            if wan_connection:
+                # Add status and type sensors
+                for description in SENSOR_TYPES:
+                    if description.key in ["wan_status", "wan_type"]:
+                        # Create a copy of the description for this specific WAN
+                        sensor_description = PeplinkSensorEntityDescription(
+                            key=f"{description.key.replace('wan_', '')}",
+                            translation_key=description.translation_key,
+                            name=description.name,
+                            native_unit_of_measurement=description.native_unit_of_measurement,
+                            device_class=description.device_class,
+                            state_class=description.state_class,
+                            value_fn=description.value_fn,
+                        )
+                        entities.append(
+                            PeplinkWANSensor(
+                                coordinator=coordinator,
+                                description=sensor_description,
+                                sensor_data=wan_connection,
+                                device_info=device_info,
+                                wan_id=wan_id,
+                            )
+                        )
+                
+                # Add binary sensors
+                for description in BINARY_SENSOR_TYPES:
+                    if description.key == "wan_connected":
+                        # Create a copy of the description for this specific WAN
+                        binary_description = PeplinkBinarySensorEntityDescription(
+                            key=f"{description.key.replace('wan_', '')}",
+                            translation_key=description.translation_key,
+                            name=description.name,
+                            device_class=description.device_class,
+                            value_fn=description.value_fn,
+                        )
+                        entities.append(
+                            PeplinkWANBinarySensor(
+                                coordinator=coordinator,
+                                description=binary_description,
+                                sensor_data=wan_connection,
+                                device_info=device_info,
+                                wan_id=wan_id,
+                            )
+                        )
 
     async_add_entities(entities)
 
 
-class PeplinkSensor(CoordinatorEntity[PeplinkDataUpdateCoordinator], SensorEntity):
+class PeplinkSensor(CoordinatorEntity, SensorEntity):
     """Implementation of a Peplink sensor."""
 
     entity_description: PeplinkSensorEntityDescription
@@ -229,38 +297,71 @@ class PeplinkSensor(CoordinatorEntity[PeplinkDataUpdateCoordinator], SensorEntit
         )
 
     @property
-    def native_value(self) -> StateType:
+    def native_value(self):
         """Return the state of the sensor."""
-        if not self.coordinator.data:
+        if self.entity_description.value_fn is None:
             return None
 
-        # Find the current sensor data based on the key
-        if self.entity_description.key.startswith("system_temperature"):
-            thermal_sensors = self.coordinator.data.get("thermal_sensors", {})
-            if thermal_sensors and thermal_sensors.get("sensors"):
-                sensor_data = thermal_sensors["sensors"][0]  # Only one sensor
-            else:
-                return None
-        elif self.entity_description.key.startswith("fan_"):
-            fan_num = int(self.entity_description.key.split("_")[1])
-            fans = self.coordinator.data.get("fan_speeds", {}).get("fans", [])
-            if fan_num <= len(fans):
-                sensor_data = fans[fan_num - 1]
-            else:
-                return None
-        elif self.entity_description.key.startswith("wan_"):
-            wan_id = self.entity_description.key.split("_")[-1]
-            stats = self.coordinator.data.get("traffic_stats", {}).get("stats", [])
-            sensor_data = next(
-                (stat for stat in stats if stat["wan_id"] == wan_id),
-                None,
-            )
-            if not sensor_data:
-                return None
-        else:
+        return self.entity_description.value_fn(self._sensor_data)
+
+
+class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
+    """Implementation of a Peplink WAN sensor."""
+
+    entity_description: PeplinkSensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PeplinkDataUpdateCoordinator,
+        description: PeplinkSensorEntityDescription,
+        sensor_data: dict[str, Any],
+        device_info: DeviceInfo,
+        wan_id: str,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+
+        self.entity_description = description
+        self._sensor_data = sensor_data
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_wan{wan_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if self.entity_description.value_fn is None:
             return None
 
-        if self.entity_description.value_fn is not None:
-            return self.entity_description.value_fn(sensor_data)
+        return self.entity_description.value_fn(self._sensor_data)
 
-        return None
+
+class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Implementation of a Peplink WAN binary sensor."""
+
+    entity_description: PeplinkBinarySensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PeplinkDataUpdateCoordinator,
+        description: PeplinkBinarySensorEntityDescription,
+        sensor_data: dict[str, Any],
+        device_info: DeviceInfo,
+        wan_id: str,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+
+        self.entity_description = description
+        self._sensor_data = sensor_data
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_wan{wan_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    @property
+    def is_on(self):
+        """Return true if the binary sensor is on."""
+        if self.entity_description.value_fn is None:
+            return None
+
+        return self.entity_description.value_fn(self._sensor_data)
