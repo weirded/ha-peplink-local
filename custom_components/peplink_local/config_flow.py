@@ -70,6 +70,17 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
+        # Use user_input as defaults if provided, otherwise empty dict
+        defaults = user_input or {}
+        
+        # Create a dynamic schema that uses the previous input as defaults
+        schema = vol.Schema({
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): str,
+            vol.Optional(CONF_VERIFY_SSL, default=defaults.get(CONF_VERIFY_SSL, True)): bool,
+        })
+
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
@@ -82,7 +93,7 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title=info["title"], data=user_input)
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user", data_schema=schema, errors=errors
         )
 
     @staticmethod

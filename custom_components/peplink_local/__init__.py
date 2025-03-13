@@ -139,23 +139,35 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not await self.api.ensure_connected():
                 raise UpdateFailed("Failed to connect to Peplink router")
 
-            wan_status = await self.api.get_wan_status()
+            # Parallelize API calls using asyncio.gather
+            results = await asyncio.gather(
+                self.api.get_wan_status(),
+                self.api.get_clients(),
+                self.api.get_thermal_sensors(),
+                self.api.get_fan_speeds(),
+                self.api.get_traffic_stats(),
+                return_exceptions=True,
+            )
+            
+            # Check results for exceptions
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    api_calls = ["WAN status", "client information", "thermal sensor data", 
+                                "fan speed data", "traffic statistics"]
+                    raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
+                
+            # Unpack results
+            wan_status, clients, thermal_sensors, fan_speeds, traffic_stats = results
+            
+            # Validate results
             if not wan_status:
                 raise UpdateFailed("Failed to get WAN status")
-
-            clients = await self.api.get_clients()
             if not clients:
                 raise UpdateFailed("Failed to get client information")
-
-            thermal_sensors = await self.api.get_thermal_sensors()
             if not thermal_sensors:
                 raise UpdateFailed("Failed to get thermal sensor data")
-
-            fan_speeds = await self.api.get_fan_speeds()
             if not fan_speeds:
                 raise UpdateFailed("Failed to get fan speed data")
-
-            traffic_stats = await self.api.get_traffic_stats()
             if not traffic_stats:
                 raise UpdateFailed("Failed to get traffic statistics")
 
