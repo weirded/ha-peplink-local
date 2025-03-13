@@ -19,6 +19,10 @@ import aiohttp
 _LOGGER = logging.getLogger(__name__)
 
 
+class PeplinkAuthFailed(Exception):
+    """Authentication failed."""
+
+
 def _create_insecure_ssl_context():
     """Create an insecure SSL context (non-blocking function)."""
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -139,7 +143,7 @@ class PeplinkAPI:
                 if not (login_result.get("success", False) or login_result.get("stat") == "ok"):
                     error_msg = login_result.get('message', 'Unknown error')
                     _LOGGER.error("Login failed: %s", error_msg)
-                    return False
+                    raise PeplinkAuthFailed(error_msg)
                 
                 # Store any cookies or tokens returned by the server
                 if 'token' in login_result:
