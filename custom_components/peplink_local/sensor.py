@@ -21,6 +21,7 @@ from homeassistant.const import (
     REVOLUTIONS_PER_MINUTE,
     UnitOfTemperature,
     UnitOfDataRate,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -95,22 +96,40 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         value_fn=lambda x: x.get("tx_rate"),
     ),
     PeplinkSensorEntityDescription(
-        key="wan_status",
-        translation_key=None,
-        name="Status",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        value_fn=lambda x: x.get("message"),
-    ),
-    PeplinkSensorEntityDescription(
         key="wan_type",
         translation_key=None,
         name="Type",
         native_unit_of_measurement=None,
         device_class=None,
         state_class=None,
-        value_fn=lambda x: x.get("type"),
+        value_fn=lambda x: _translate_wan_type(x.get("type")),
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_name",
+        translation_key=None,
+        name="Name",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("name"),
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_uptime",
+        translation_key=None,
+        name="Uptime",
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=None,
+        value_fn=lambda x: x.get("uptime"),
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_ip",
+        translation_key=None,
+        name="IP Address",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("ip"),
     ),
 )
 
@@ -118,7 +137,7 @@ BINARY_SENSOR_TYPES: tuple[PeplinkBinarySensorEntityDescription, ...] = (
     PeplinkBinarySensorEntityDescription(
         key="wan_connected",
         translation_key=None,
-        name="Connected",
+        name="Connection Status",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda x: x.get("message") == "Connected",
     ),
@@ -177,8 +196,9 @@ async def async_setup_entry(
     if coordinator.data.get("traffic_stats", {}).get("stats"):
         wan_stats = coordinator.data["traffic_stats"]["stats"]
         
-        # Get the WAN status data
-        wan_connections = coordinator.data.get("wan_connections", {})
+        # Get the WAN status data - Fix key mismatch here
+        wan_status = coordinator.data.get("wan_status", {})
+        wan_connections = wan_status.get("connection", [])
         
         for wan in wan_stats:
             wan_id = wan['wan_id']
@@ -195,15 +215,14 @@ async def async_setup_entry(
             
             # Find matching WAN connection data
             wan_connection = None
-            if wan_connections:
-                for wan_conn_id, wan_conn_data in wan_connections.items():
-                    if str(wan_conn_id) == str(wan_id):
-                        wan_connection = wan_conn_data
-                        break
+            for connection in wan_connections:
+                if str(connection.get("id", "")) == str(wan_id):
+                    wan_connection = connection
+                    break
             
             # Create traffic rate sensors
             for description in SENSOR_TYPES:
-                if description.key.startswith("wan_") and description.key in ["wan_download_rate", "wan_upload_rate"]:
+                if description.key in ["wan_download_rate", "wan_upload_rate"]:
                     # Create a copy of the description for this specific WAN
                     sensor_description = PeplinkSensorEntityDescription(
                         key=f"{description.key.replace('wan_', '')}",
@@ -226,11 +245,11 @@ async def async_setup_entry(
                         )
                     )
             
-            # Add status and type sensors if WAN connection data is available
+            # Add all relevant sensors if WAN connection data is available
             if wan_connection:
-                # Add status and type sensors
+                # Add all relevant sensors
                 for description in SENSOR_TYPES:
-                    if description.key in ["wan_status", "wan_type"]:
+                    if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message"]:
                         # Create a copy of the description for this specific WAN
                         sensor_description = PeplinkSensorEntityDescription(
                             key=f"{description.key.replace('wan_', '')}",
@@ -254,7 +273,7 @@ async def async_setup_entry(
                 
                 # Add binary sensors
                 for description in BINARY_SENSOR_TYPES:
-                    if description.key == "wan_connected":
+                    if description.key.startswith("wan_"):
                         # Create a copy of the description for this specific WAN
                         binary_sensor_description = PeplinkBinarySensorEntityDescription(
                             key=f"{description.key.replace('wan_', '')}",
@@ -332,8 +351,17 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         self.entity_description = description
         self._sensor_data = sensor_data
         # Use IP address as the prefix for consistent entity IDs
-        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}"
+        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
         self._attr_device_info = device_info
+        
+        # Add extra attributes for IP sensor
+        self._extra_attrs = {}
+        if description.key == "wan_ip" and sensor_data:
+            self._extra_attrs = {
+                "gateway": sensor_data.get("gateway"),
+                "dns": sensor_data.get("dns", []),
+                "mask": sensor_data.get("mask"),
+            }
 
     @property
     def native_value(self):
@@ -342,6 +370,11 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
             return None
 
         return self.entity_description.value_fn(self._sensor_data)
+        
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity specific state attributes."""
+        return self._extra_attrs
 
 
 class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
@@ -363,8 +396,7 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
         self.entity_description = description
         self._sensor_data = sensor_data
-        # Use IP address as the prefix for consistent entity IDs
-        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}"
+        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
         self._attr_device_info = device_info
 
     @property
@@ -374,3 +406,21 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
             return None
 
         return self.entity_description.value_fn(self._sensor_data)
+
+
+def _translate_wan_type(wan_type: str) -> str:
+    """Translate WAN type to more user-friendly format."""
+    if not wan_type:
+        return None
+        
+    type_map = {
+        "modem": "Modem",
+        "wireless": "Wireless",
+        "gobi": "Cellular",
+        "cellular": "Cellular",
+        "ipsec": "IPSec VPN",
+        "adsl": "ADSL",
+        "ethernet": "Ethernet"
+    }
+    
+    return type_map.get(wan_type.lower(), wan_type)
