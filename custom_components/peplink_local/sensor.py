@@ -162,6 +162,7 @@ async def async_setup_entry(
                 device_class=None,
                 state_class=SensorStateClass.MEASUREMENT,
                 entity_category=EntityCategory.DIAGNOSTIC,
+                icon="mdi:fan",
                 value_fn=lambda x: x.get("speed"),
             )
             entities.append(
@@ -252,7 +253,7 @@ async def async_setup_entry(
                 for description in BINARY_SENSOR_TYPES:
                     if description.key == "wan_connected":
                         # Create a copy of the description for this specific WAN
-                        binary_description = PeplinkBinarySensorEntityDescription(
+                        binary_sensor_description = PeplinkBinarySensorEntityDescription(
                             key=f"{description.key.replace('wan_', '')}",
                             translation_key=description.translation_key,
                             name=description.name,
@@ -262,7 +263,7 @@ async def async_setup_entry(
                         entities.append(
                             PeplinkWANBinarySensor(
                                 coordinator=coordinator,
-                                description=binary_description,
+                                description=binary_sensor_description,
                                 sensor_data=wan_connection,
                                 device_info=device_info,
                                 wan_id=wan_id,
@@ -289,12 +290,13 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
 
         self.entity_description = description
         self._sensor_data = sensor_data
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        # Use IP address as the prefix for consistent entity IDs
+        self._attr_unique_id = f"{coordinator.host}_{description.key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             manufacturer="Peplink",
             model=coordinator.model,
-            name=coordinator.host,
+            name=f"Peplink Router ({coordinator.host})",
             sw_version=coordinator.firmware,
         )
 
@@ -326,7 +328,8 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
 
         self.entity_description = description
         self._sensor_data = sensor_data
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_wan{wan_id}_{description.key}"
+        # Use IP address as the prefix for consistent entity IDs
+        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}"
         self._attr_device_info = device_info
 
     @property
@@ -357,7 +360,8 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
         self.entity_description = description
         self._sensor_data = sensor_data
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_wan{wan_id}_{description.key}"
+        # Use IP address as the prefix for consistent entity IDs
+        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}"
         self._attr_device_info = device_info
 
     @property

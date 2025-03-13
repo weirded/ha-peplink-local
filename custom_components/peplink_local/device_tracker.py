@@ -83,7 +83,8 @@ class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):
         self._config_entry_id = config_entry_id
         self._client_name = client_name
         self._client_mac = client_mac
-        self._attr_unique_id = f"{config_entry_id}_client_{client_mac}"
+        # Use IP address as the prefix for consistent entity IDs
+        self._attr_unique_id = f"{coordinator.host}_client_{client_mac}"
         self._attr_name = f"{client_name}"
         self._is_connected = False
         self._ip_address = None
@@ -97,11 +98,13 @@ class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this Peplink router."""
+        # Get the host from the coordinator if possible
+        host = self.coordinator.host if hasattr(self.coordinator, "host") else None
         return DeviceInfo(
             identifiers={(DOMAIN, self._config_entry_id)},
-            name="Peplink Router",
             manufacturer="Peplink",
             model="Router",
+            name=f"Peplink Router ({host})" if host else "Peplink Router",
         )
 
     @property
