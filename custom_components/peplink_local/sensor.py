@@ -62,7 +62,8 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("value"),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("temperature"),
     ),
     PeplinkSensorEntityDescription(
         key="system_temperature_threshold",
@@ -160,6 +161,7 @@ async def async_setup_entry(
                 native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
                 device_class=None,
                 state_class=SensorStateClass.MEASUREMENT,
+                entity_category=EntityCategory.DIAGNOSTIC,
                 value_fn=lambda x: x.get("speed"),
             )
             entities.append(
