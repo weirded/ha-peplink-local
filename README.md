@@ -11,18 +11,18 @@ This custom integration allows you to monitor and track your Peplink router from
 ## Features
 
 - **WAN Status Sensors**: 
-  - Connection status (binary sensor)
-  - WAN name (text sensor)
-  - Connection message (text sensor)
-  - IP address with gateway information (text sensor)
-  - Connection type (text sensor)
-  - Priority (numeric sensor)
-  - Up since timestamp (timestamp sensor)
-  - Download speed (data rate sensor)
-  - Upload speed (data rate sensor)
+  - System Temperature (temperature sensor)
+  - System Temperature Threshold (temperature sensor)
+  - Download Rate (data rate sensor)
+  - Upload Rate (data rate sensor)
+  - WAN Type (text sensor)
+  - WAN Name (text sensor)
+  - WAN IP Address (text sensor)
+  - WAN Up Since (timestamp sensor)
 - **Router Sensors**:
-  - CPU temperature (temperature sensor)
-  - Fan speeds (speed sensors)
+  - Fan Speed Sensors (speed sensors, dynamically created for each fan)
+- **Binary Sensors**:
+  - Connection Status (connectivity sensor)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
 - **Local Communication**: Communicates directly with your Peplink router over your local network
 
@@ -80,14 +80,15 @@ For each enabled WAN interface (e.g., WAN1), the following entities are created:
 | `sensor.wan1_connection_type` | Sensor | Type of connection (Ethernet, Cellular, etc.) |
 | `sensor.wan1_priority` | Sensor | Priority of the WAN interface for routing |
 | `sensor.wan1_up_since` | Timestamp | When the WAN interface was last connected/up since |
-| `sensor.wan1_download_speed` | Data Rate | Current download speed in kilobits per second |
-| `sensor.wan1_upload_speed` | Data Rate | Current upload speed in kilobits per second |
+| `sensor.wan1_download_speed` | Data Rate | Current download speed in megabits per second |
+| `sensor.wan1_upload_speed` | Data Rate | Current upload speed in megabits per second |
 
 Additionally, the following router-specific sensors are created:
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.cpu_temperature` | Temperature | CPU temperature in degrees Celsius |
+| `sensor.system_temperature` | Temperature | System temperature in degrees Celsius |
+| `sensor.system_temperature_threshold` | Temperature | System temperature threshold in degrees Celsius |
 | `sensor.fan_1_speed` | Speed | Speed of the first fan in RPM (if available) |
 | `sensor.fan_2_speed` | Speed | Speed of the second fan in RPM (if available) |
 
