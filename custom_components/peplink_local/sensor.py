@@ -111,6 +111,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         state_class=None,
         value_fn=lambda x: _translate_wan_type(x.get("type")),
         icon="mdi:lan",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     PeplinkSensorEntityDescription(
         key="wan_name",
@@ -146,17 +147,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
             else None
         ),
         icon="mdi:clock-start",
-    ),
-)
-
-BINARY_SENSOR_TYPES: tuple[PeplinkBinarySensorEntityDescription, ...] = (
-    PeplinkBinarySensorEntityDescription(
-        key="wan_connected",
-        translation_key=None,
-        name="Connection Status",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda x: x.get("message") == "Connected",
-        icon="mdi:network",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
@@ -263,6 +254,27 @@ async def async_setup_entry(
             
             # Add all relevant sensors if WAN connection data is available
             if wan_connection:
+                # Add a connection status sensor
+                message_description = PeplinkSensorEntityDescription(
+                    key="message",
+                    translation_key=None,
+                    name="Message",
+                    native_unit_of_measurement=None,
+                    device_class=None,
+                    state_class=None,
+                    value_fn=lambda x: x.get("message"),
+                    icon="mdi:network",
+                )
+                entities.append(
+                    PeplinkWANSensor(
+                        coordinator=coordinator,
+                        description=message_description,
+                        sensor_data=wan_connection,
+                        device_info=device_info,
+                        wan_id=wan_id,
+                    )
+                )
+                
                 # Add all relevant sensors
                 for description in SENSOR_TYPES:
                     if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message", "wan_uptime"]:
@@ -281,28 +293,6 @@ async def async_setup_entry(
                             PeplinkWANSensor(
                                 coordinator=coordinator,
                                 description=sensor_description,
-                                sensor_data=wan_connection,
-                                device_info=device_info,
-                                wan_id=wan_id,
-                            )
-                        )
-                
-                # Add binary sensors
-                for description in BINARY_SENSOR_TYPES:
-                    if description.key.startswith("wan_"):
-                        # Create a copy of the description for this specific WAN
-                        binary_sensor_description = PeplinkBinarySensorEntityDescription(
-                            key=f"{description.key.replace('wan_', '')}",
-                            translation_key=description.translation_key,
-                            name=description.name,
-                            device_class=description.device_class,
-                            value_fn=description.value_fn,
-                            icon=description.icon,
-                        )
-                        entities.append(
-                            PeplinkWANBinarySensor(
-                                coordinator=coordinator,
-                                description=binary_sensor_description,
                                 sensor_data=wan_connection,
                                 device_info=device_info,
                                 wan_id=wan_id,
@@ -399,41 +389,6 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
         return self._extra_attrs
-
-
-class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Implementation of a Peplink WAN binary sensor."""
-
-    entity_description: PeplinkBinarySensorEntityDescription
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        coordinator: PeplinkDataUpdateCoordinator,
-        description: PeplinkBinarySensorEntityDescription,
-        sensor_data: dict[str, Any],
-        device_info: DeviceInfo,
-        wan_id: str,
-    ) -> None:
-        """Initialize the binary sensor."""
-        super().__init__(coordinator)
-
-        self.entity_description = description
-        self._sensor_data = sensor_data
-        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
-        self._attr_device_info = device_info
-        
-        # Set custom icon if provided
-        if description.icon:
-            self._attr_icon = description.icon
-
-    @property
-    def is_on(self):
-        """Return true if the binary sensor is on."""
-        if self.entity_description.value_fn is None:
-            return None
-
-        return self.entity_description.value_fn(self._sensor_data)
 
 
 def _translate_wan_type(wan_type: str) -> str:
