@@ -248,8 +248,7 @@ async def async_setup_entry(
                         native_unit_of_measurement=description.native_unit_of_measurement,
                         device_class=description.device_class,
                         state_class=description.state_class,
-                        # Add appropriate icons for upload and download
-                        icon="mdi:arrow-down-bold" if description.key == "wan_download_rate" else "mdi:arrow-up-bold",
+                        icon=description.icon,  # Use the icon from the original description
                         value_fn=description.value_fn,
                     )
                     entities.append(
@@ -275,7 +274,7 @@ async def async_setup_entry(
                             native_unit_of_measurement=description.native_unit_of_measurement,
                             device_class=description.device_class,
                             state_class=description.state_class,
-                            icon="mdi:server-network",
+                            icon=description.icon,  # Use the icon from the original description
                             value_fn=description.value_fn,
                         )
                         entities.append(
