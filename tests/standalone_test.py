@@ -15,13 +15,15 @@ import ssl
 from pathlib import Path
 from urllib.parse import urljoin
 import time
+import aiohttp
+import types
 
 # Add the parent directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the API client directly from its file
 sys.path.append(str(Path(__file__).parent.parent / "custom_components" / "peplink_local"))
-from peplink_api import PeplinkAPI  # isort:skip
+from peplink_api import PeplinkAPI, _create_insecure_ssl_context  # isort:skip
 
 # Import dotenv for loading environment variables
 try:
@@ -39,13 +41,22 @@ logging.basicConfig(
 )
 _LOGGER = logging.getLogger(__name__)
 
-# Create an insecure SSL context (copied from the API client to avoid imports)
-def create_insecure_ssl_context():
-    """Create an insecure SSL context that doesn't verify SSL certificates."""
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
+# Patch the _get_session method to fix SSL issues
+async def patched_get_session(self) -> aiohttp.ClientSession:
+    """Patched version of _get_session that works around SSL issues."""
+    if not self._session:
+        if self._verify_ssl:
+            # Create a standard session
+            self._session = aiohttp.ClientSession()
+        else:
+            # Create a session with SSL verification disabled
+            ssl_context = _create_insecure_ssl_context()
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            self._session = aiohttp.ClientSession(connector=connector)
+            
+        self._own_session = True
+    
+    return self._session
 
 async def test_api(router_ip, username, password, verify_ssl=False):
     """Test the Peplink API by connecting and fetching data."""
@@ -56,6 +67,9 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         password=password,
         verify_ssl=verify_ssl
     )
+    
+    # Patch the _get_session method to fix SSL issues
+    api._get_session = types.MethodType(patched_get_session, api)
     
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent / "output"
