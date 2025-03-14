@@ -17,7 +17,7 @@ This document tracks the features, implementation details, and development stand
   - Upload Rate (in Mbit/s, rounded to 2 decimal places)
   - IP Address (with gateway, DNS, and subnet mask as attributes)
   - WAN Type (with friendly translations)
-  - Uptime (with duration device class)
+  - Up Since (timestamp showing when the connection was established)
   - Name
 
 - **System Sensors**:

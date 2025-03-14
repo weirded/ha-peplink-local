@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from typing import Any, Callable
+import datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -122,16 +123,6 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         icon="mdi:tag",
     ),
     PeplinkSensorEntityDescription(
-        key="wan_uptime",
-        translation_key=None,
-        name="Uptime",
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda x: x.get("uptime"),
-        icon="mdi:timer-outline",
-    ),
-    PeplinkSensorEntityDescription(
         key="wan_ip",
         translation_key=None,
         name="IP Address",
@@ -140,6 +131,21 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         state_class=None,
         value_fn=lambda x: x.get("ip"),
         icon="mdi:ip-network",
+    ),
+    PeplinkSensorEntityDescription(
+        key="wan_up_since",
+        translation_key=None,
+        name="Up Since",
+        native_unit_of_measurement=None,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        state_class=None,
+        # Calculate the "up since" timestamp by subtracting uptime from current time
+        value_fn=lambda x: (
+            dt_util.utcnow() - datetime.timedelta(seconds=x.get("uptime"))
+            if x.get("uptime") is not None
+            else None
+        ),
+        icon="mdi:clock-start",
     ),
 )
 
@@ -260,7 +266,7 @@ async def async_setup_entry(
             if wan_connection:
                 # Add all relevant sensors
                 for description in SENSOR_TYPES:
-                    if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message"]:
+                    if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message", "wan_uptime"]:
                         # Create a copy of the description for this specific WAN
                         sensor_description = PeplinkSensorEntityDescription(
                             key=f"{description.key.replace('wan_', '')}",
