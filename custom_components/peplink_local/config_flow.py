@@ -13,7 +13,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
-from .peplink_api import PeplinkAPI, PeplinkAuthFailed
+from .peplink_api import PeplinkAPI, PeplinkAuthFailed, PeplinkSSLError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +51,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
             raise PeplinkAuthFailed
     except PeplinkAuthFailed as err:
         raise PeplinkAuthFailed from err
+    except PeplinkSSLError as err:
+        # Catch and re-raise SSL errors separately
+        raise PeplinkSSLError from err
     except Exception as e:
         _LOGGER.exception("Unexpected exception: %s", e)
         raise
@@ -86,6 +89,8 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except PeplinkAuthFailed:
                 errors["base"] = "invalid_auth"
+            except PeplinkSSLError:
+                errors["base"] = "ssl_error"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"

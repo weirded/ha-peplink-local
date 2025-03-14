@@ -25,6 +25,10 @@ class PeplinkAuthFailed(Exception):
     """Authentication failed."""
 
 
+class PeplinkSSLError(Exception):
+    """SSL Certificate validation error."""
+
+
 def _create_insecure_ssl_context():
     """Create an insecure SSL context (non-blocking function)."""
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -76,78 +80,71 @@ class PeplinkAPI:
 
     async def connect(self) -> bool:
         """Connect to the Peplink router and authenticate."""
+        if self._connected:
+            return True
+        
+        # Create or get a session object
+        session = await self._get_session()
+        
         try:
-            # Reset connection state
-            self._connected = False
-            
-            session = await self._get_session()
-            
-            # Step 1: Get the login challenge
+            # Step 1: Login to get a cookie
             login_url = urljoin(self.base_url, "/api/login")
-            _LOGGER.debug("Getting login challenge from %s", login_url)
             
-            async with session.get(login_url) as response:
-                response.raise_for_status()
-                challenge_data = await response.json()
-                _LOGGER.debug("Received challenge: %s", challenge_data)
-                
-                # Get the challenge from the response
-                if challenge_data.get("stat") != "ok":
-                    _LOGGER.error("Failed to get login challenge: %s", challenge_data)
-                    return False
-                    
-                # The challenge is in the response field
-                challenge = challenge_data.get("response", {}).get("challenge", "")
-                
-            # Step 2: Send login request with credentials
             login_data = {
                 "username": self.username,
                 "password": self.password,
-                "challenge": challenge  # Include the challenge in the login request
+                "challenge": "challenge"  # Required by Peplink API
             }
             
-            _LOGGER.debug("Sending login request with data: %s", 
-                         {**login_data, "password": "***"})  # Don't log the actual password
+            _LOGGER.debug("Attempting to connect to %s", login_url)
             
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-            
-            async with session.post(login_url, json=login_data, headers=headers) as response:
-                response.raise_for_status()
-                login_response = await response.json()
-                _LOGGER.debug("Login response: %s", login_response)
-                
-                if login_response.get("stat") != "ok":
-                    _LOGGER.error("Login failed: %s", login_response)
-                    return False
-                
-                # Log response headers for debugging
-                _LOGGER.debug("Response headers: %s", dict(response.headers))
-                
-                # Extract cookie from Set-Cookie header if it exists
-                if "Set-Cookie" in response.headers:
-                    cookie_header = response.headers["Set-Cookie"]
-                    _LOGGER.debug("Set-Cookie header found: %s", cookie_header)
+            try:
+                async with session.post(login_url, json=login_data) as response:
+                    if response.status == 401:
+                        _LOGGER.error("Failed to authenticate: 401 Unauthorized")
+                        return False
                     
-                    # Look for bauth cookie in header
-                    if "bauth=" in cookie_header:
-                        # Extract the bauth value from cookie header
-                        # Format is typically: bauth=VALUE; path=/; HttpOnly
-                        cookie_parts = cookie_header.split(';')
-                        for part in cookie_parts:
-                            if part.strip().startswith("bauth="):
-                                self._auth_cookie = part.strip().split('=', 1)[1]
-                                _LOGGER.debug("Extracted bauth value from header: %s", self._auth_cookie)
-                                break
+                    response.raise_for_status()
+                    login_response = await response.json()
+                    
+                    # Check for successful login
+                    if login_response.get("stat") != "ok":
+                        _LOGGER.error("Failed to authenticate: %s", login_response.get("message", "Unknown error"))
+                        return False
+                    
+                    # Parse cookie from response
+                    cookies = response.cookies
+                    _LOGGER.debug("Cookies from response: %s", cookies)
+                    
+                    # Extract the bauth cookie
+                    if "bauth" in cookies:
+                        self._auth_cookie = cookies["bauth"].value
+                        _LOGGER.debug("Got auth cookie: %s", self._auth_cookie)
+                    
+                    if not self._auth_cookie:
+                        # Try extracting from Set-Cookie header if available
+                        if "Set-Cookie" in response.headers:
+                            cookie_header = response.headers["Set-Cookie"]
+                            _LOGGER.debug("Set-Cookie header: %s", cookie_header)
+                            
+                            if "bauth=" in cookie_header:
+                                # Extract the bauth value from cookie header
+                                # Format is typically: bauth=VALUE; path=/; HttpOnly
+                                cookie_parts = cookie_header.split(';')
+                                for part in cookie_parts:
+                                    if part.strip().startswith("bauth="):
+                                        self._auth_cookie = part.strip().split('=', 1)[1]
+                                        _LOGGER.debug("Extracted bauth cookie from header: %s", self._auth_cookie)
+                                        break
+                    
+                    if not self._auth_cookie:
+                        _LOGGER.error("No auth cookie received after login")
+                        return False
+            except aiohttp.ClientConnectorCertificateError as e:
+                _LOGGER.error("SSL Certificate error: %s", e)
+                self._connected = False
+                raise PeplinkSSLError(f"SSL Certificate validation failed: {e}")
                 
-                # Check if we have a valid auth cookie
-                if not self._auth_cookie:
-                    _LOGGER.warning("No 'bauth' cookie found in login response. Authentication may fail.")
-                else:
-                    _LOGGER.debug("Authentication cookie successfully stored")
-            
             # Step 3: Verify that we're authenticated by accessing a protected endpoint
             verify_url = urljoin(self.base_url, "/api/status")
             
@@ -171,6 +168,13 @@ class PeplinkAPI:
             self._connected = True
             return True
             
+        except PeplinkSSLError:
+            # Re-raise SSL errors so they can be handled differently from auth errors
+            raise
+        except aiohttp.ClientConnectorError as e:
+            _LOGGER.error("Connection error (host unreachable): %s", e)
+            self._connected = False
+            return False
         except aiohttp.ClientError as e:
             _LOGGER.error("Connection error: %s", e)
             self._connected = False
