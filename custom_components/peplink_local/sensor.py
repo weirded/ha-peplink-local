@@ -45,6 +45,7 @@ class PeplinkSensorEntityDescription(SensorEntityDescription):
     """Class describing Peplink sensor entities."""
 
     value_fn: Callable[[dict], Any] | None = None
+    icon: str | None = None
 
 
 @dataclass
@@ -52,6 +53,7 @@ class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class describing Peplink binary sensor entities."""
 
     value_fn: Callable[[dict], Any] | None = None
+    icon: str | None = None
 
 
 SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
@@ -65,6 +67,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda x: x.get("temperature"),
+        icon="mdi:thermometer",
     ),
     PeplinkSensorEntityDescription(
         key="system_temperature_threshold",
@@ -75,6 +78,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda x: x.get("threshold"),
+        icon="mdi:thermometer-alert",
     ),
     # WAN traffic sensors - these will be created dynamically per WAN
     PeplinkSensorEntityDescription(
@@ -85,6 +89,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda x: round(x.get("rx_rate") / 1_000_000, 2) if x.get("rx_rate") is not None else None,
+        icon="mdi:download-network",
     ),
     PeplinkSensorEntityDescription(
         key="wan_upload_rate",
@@ -94,6 +99,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda x: round(x.get("tx_rate") / 1_000_000, 2) if x.get("tx_rate") is not None else None,
+        icon="mdi:upload-network",
     ),
     PeplinkSensorEntityDescription(
         key="wan_type",
@@ -103,6 +109,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=None,
         state_class=None,
         value_fn=lambda x: _translate_wan_type(x.get("type")),
+        icon="mdi:lan",
     ),
     PeplinkSensorEntityDescription(
         key="wan_name",
@@ -112,6 +119,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=None,
         state_class=None,
         value_fn=lambda x: x.get("name"),
+        icon="mdi:tag",
     ),
     PeplinkSensorEntityDescription(
         key="wan_uptime",
@@ -121,6 +129,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda x: x.get("uptime"),
+        icon="mdi:timer-outline",
     ),
     PeplinkSensorEntityDescription(
         key="wan_ip",
@@ -130,6 +139,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         device_class=None,
         state_class=None,
         value_fn=lambda x: x.get("ip"),
+        icon="mdi:ip-network",
     ),
 )
 
@@ -140,6 +150,7 @@ BINARY_SENSOR_TYPES: tuple[PeplinkBinarySensorEntityDescription, ...] = (
         name="Connection Status",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda x: x.get("message") == "Connected",
+        icon="mdi:network",
     ),
 )
 
@@ -281,6 +292,7 @@ async def async_setup_entry(
                             name=description.name,
                             device_class=description.device_class,
                             value_fn=description.value_fn,
+                            icon=description.icon,
                         )
                         entities.append(
                             PeplinkWANBinarySensor(
@@ -321,6 +333,9 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
             name=f"Peplink Router ({coordinator.host})",
             sw_version=coordinator.firmware,
         )
+        # Set custom icon if provided
+        if description.icon:
+            self._attr_icon = description.icon
 
     @property
     def native_value(self):
@@ -356,12 +371,16 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         
         # Add extra attributes for IP sensor
         self._extra_attrs = {}
-        if description.key == "wan_ip" and sensor_data:
+        if description.key == "ip" and sensor_data:
             self._extra_attrs = {
                 "gateway": sensor_data.get("gateway"),
                 "dns": sensor_data.get("dns", []),
                 "mask": sensor_data.get("mask"),
             }
+            
+        # Set custom icon if provided
+        if description.icon:
+            self._attr_icon = description.icon
 
     @property
     def native_value(self):
@@ -398,6 +417,10 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._sensor_data = sensor_data
         self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
         self._attr_device_info = device_info
+        
+        # Set custom icon if provided
+        if description.icon:
+            self._attr_icon = description.icon
 
     @property
     def is_on(self):
