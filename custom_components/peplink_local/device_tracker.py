@@ -98,13 +98,18 @@ class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this Peplink router."""
-        # Get the host from the coordinator if possible
-        host = self.coordinator.host if hasattr(self.coordinator, "host") else None
+        # Get the coordinator
+        coordinator = self.coordinator
+        
+        # Use device name from API if available
+        device_name = coordinator.device_name if hasattr(coordinator, "device_name") and coordinator.device_name else f"Peplink {coordinator.host}" if hasattr(coordinator, "host") else "Peplink"
+        
         return DeviceInfo(
             identifiers={(DOMAIN, self._config_entry_id)},
             manufacturer="Peplink",
-            model="Router",
-            name=f"Peplink {host} System" if host else "Peplink System",
+            model=coordinator.model if hasattr(coordinator, "model") else "Router",
+            name=device_name,
+            sw_version=coordinator.firmware if hasattr(coordinator, "firmware") else None,
         )
 
     @property

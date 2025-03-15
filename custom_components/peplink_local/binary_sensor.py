@@ -63,12 +63,15 @@ async def async_setup_entry(
         if connection.get("enable") is False:
             continue
             
+        # Use the device name from API if available, otherwise fallback to IP
+        device_name = coordinator.device_name or f"Peplink {coordinator.host}"
+            
         # Create device info for this WAN
         device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{coordinator.config_entry.entry_id}_wan{wan_id}")},
             manufacturer="Peplink",
             model="WAN Connection",
-            name=f"Peplink {coordinator.host} WAN{wan_id}",
+            name=f"{device_name} WAN{wan_id}",
             via_device=(DOMAIN, coordinator.config_entry.entry_id),
         )
         

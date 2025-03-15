@@ -401,11 +401,15 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
         self._sensor_data = sensor_data
         # Use IP address as the prefix for consistent entity IDs
         self._attr_unique_id = f"{coordinator.host}_{description.key}"
+        
+        # Use the device name from API if available, otherwise fallback to IP
+        device_name = coordinator.device_name or f"Peplink {coordinator.host}"
+        
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             manufacturer="Peplink",
             model=coordinator.model,
-            name=f"Peplink {coordinator.host} System",
+            name=device_name,
             sw_version=coordinator.firmware,
         )
         # Set custom icon if provided
@@ -442,7 +446,17 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         self._sensor_data = sensor_data
         # Use IP address as the prefix for consistent entity IDs
         self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
-        self._attr_device_info = device_info
+        
+        # Use the device name from API if available, otherwise fallback to IP
+        device_name = coordinator.device_name or f"Peplink {coordinator.host}"
+        
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{coordinator.config_entry.entry_id}_wan{wan_id}")},
+            manufacturer="Peplink",
+            model="WAN Connection",
+            name=f"{device_name} WAN{wan_id}",
+            via_device=(DOMAIN, coordinator.config_entry.entry_id),
+        )
         
         # Add extra attributes for IP sensor
         self._extra_attrs = {}

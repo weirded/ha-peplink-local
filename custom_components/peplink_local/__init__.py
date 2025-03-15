@@ -74,13 +74,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "api": api,
         }
 
+        # Get device name from device info if available, otherwise use a generic name
+        device_name = coordinator.device_name or f"Peplink Router ({host})"
+        
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Peplink Router ({host})",
+            name=device_name,
             manufacturer="Peplink",
-            model="Router",
+            model=coordinator.model,
+            sw_version=coordinator.firmware,
         )
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -134,6 +138,7 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.host = config_entry.data[CONF_HOST]
         self.model = "Router"  # Can be updated later if the API provides model info
         self.firmware = "Unknown"  # Can be updated later if the API provides firmware info
+        self.device_name = None  # Can be updated later if the API provides device name
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via API."""
@@ -184,6 +189,8 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.model = device_info_data["model"]
                 if device_info_data.get("firmware_version"):
                     self.firmware = device_info_data["firmware_version"]
+                if device_info_data.get("name"):
+                    self.device_name = device_info_data["name"]
 
             return {
                 "wan_status": wan_status,

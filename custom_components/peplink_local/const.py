@@ -10,7 +10,7 @@ CONF_VERIFY_SSL = "verify_ssl"
 
 # Defaults
 DEFAULT_PORT = 443
-DEFAULT_VERIFY_SSL = True
+DEFAULT_VERIFY_SSL = False
 SCAN_INTERVAL = 30  # seconds
 
 # Attributes
