@@ -217,7 +217,7 @@ async def async_setup_entry(
                 identifiers={(DOMAIN, f"{coordinator.config_entry.entry_id}_wan{wan_id}")},
                 manufacturer="Peplink",
                 model="WAN Connection",
-                name=f"WAN{wan_id} ({wan_name})",
+                name=f"Peplink {coordinator.host} WAN{wan_id}",
                 via_device=(DOMAIN, coordinator.config_entry.entry_id),
             )
             
@@ -325,7 +325,7 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             manufacturer="Peplink",
             model=coordinator.model,
-            name=f"Peplink Router ({coordinator.host})",
+            name=f"Peplink {coordinator.host} System",
             sw_version=coordinator.firmware,
         )
         # Set custom icon if provided

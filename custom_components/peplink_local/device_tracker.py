@@ -104,7 +104,7 @@ class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):
             identifiers={(DOMAIN, self._config_entry_id)},
             manufacturer="Peplink",
             model="Router",
-            name=f"Peplink Router ({host})" if host else "Peplink Router",
+            name=f"Peplink {host} System" if host else "Peplink System",
         )
 
     @property
