@@ -77,13 +77,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Get device name from device info if available, otherwise use a generic name
         device_name = coordinator.device_name or f"Peplink Router ({host})"
         
+        # Create model string with available info
+        model_string = coordinator.model or "Router"
+        if coordinator.product_code and coordinator.hardware_revision:
+            model_string = f"{model_string} ({coordinator.product_code} HW {coordinator.hardware_revision})"
+        elif coordinator.product_code:
+            model_string = f"{model_string} ({coordinator.product_code})"
+        elif coordinator.hardware_revision:
+            model_string = f"{model_string} (HW {coordinator.hardware_revision})"
+        
         device_registry = dr.async_get(hass)
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, entry.entry_id)},
             name=device_name,
             manufacturer="Peplink",
-            model=coordinator.model,
+            model=model_string,
+            serial_number=coordinator.serial_number,
             sw_version=coordinator.firmware,
         )
 
@@ -139,6 +149,9 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.model = "Router"  # Can be updated later if the API provides model info
         self.firmware = "Unknown"  # Can be updated later if the API provides firmware info
         self.device_name = None  # Can be updated later if the API provides device name
+        self.serial_number = None  # Can be updated later if the API provides serial number
+        self.product_code = None  # Can be updated later if the API provides product code
+        self.hardware_revision = None  # Can be updated later if the API provides hardware revision
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via API."""
@@ -191,6 +204,12 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.firmware = device_info_data["firmware_version"]
                 if device_info_data.get("name"):
                     self.device_name = device_info_data["name"]
+                if device_info_data.get("serial_number"):
+                    self.serial_number = device_info_data["serial_number"]
+                if device_info_data.get("product_code"):
+                    self.product_code = device_info_data["product_code"]
+                if device_info_data.get("hardware_revision"):
+                    self.hardware_revision = device_info_data["hardware_revision"]
 
             return {
                 "wan_status": wan_status,

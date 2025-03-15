@@ -105,39 +105,6 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         icon="mdi:label",
     ),
     PeplinkSensorEntityDescription(
-        key="device_model",
-        translation_key=None,
-        name="Model",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda x: x.get("model"),
-        icon="mdi:router-wireless",
-    ),
-    PeplinkSensorEntityDescription(
-        key="device_product_code",
-        translation_key=None,
-        name="Product Code",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda x: x.get("product_code"),
-        icon="mdi:code-brackets",
-    ),
-    PeplinkSensorEntityDescription(
-        key="device_hardware_revision",
-        translation_key=None,
-        name="Hardware Revision",
-        native_unit_of_measurement=None,
-        device_class=None,
-        state_class=None,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda x: x.get("hardware_revision"),
-        icon="mdi:chip",
-    ),
-    PeplinkSensorEntityDescription(
         key="device_firmware_version",
         translation_key=None,
         name="Firmware Version",
@@ -405,10 +372,19 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
         # Use the device name from API if available, otherwise fallback to IP
         device_name = coordinator.device_name or f"Peplink {coordinator.host}"
         
+        # Create model string with available info
+        model_string = coordinator.model or "Router"
+        if coordinator.product_code and coordinator.hardware_revision:
+            model_string = f"{model_string} ({coordinator.product_code} HW {coordinator.hardware_revision})"
+        elif coordinator.product_code:
+            model_string = f"{model_string} ({coordinator.product_code})"
+        elif coordinator.hardware_revision:
+            model_string = f"{model_string} (HW {coordinator.hardware_revision})"
+        
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             manufacturer="Peplink",
-            model=coordinator.model,
+            model=model_string,
             name=device_name,
             sw_version=coordinator.firmware,
         )

@@ -25,9 +25,6 @@ This custom integration allows you to monitor and track your Peplink router from
   - System Temperature Threshold (temperature sensor) 
   - Serial Number (diagnostic sensor)
   - Device Name (diagnostic sensor)
-  - Model (diagnostic sensor)
-  - Product Code (diagnostic sensor)
-  - Hardware Revision (diagnostic sensor)
   - Firmware Version (diagnostic sensor)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
 
