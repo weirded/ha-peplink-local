@@ -107,14 +107,9 @@ Device tracker entities are also created for each client connected to your Pepli
 
 ## Data Refresh
 
-The integration refreshes most data from your Peplink router every 30 seconds. 
+The integration refreshes all data from your Peplink router every 30 seconds.
 
-However, the following data is refreshed more frequently (every 5 seconds):
-- CPU temperature
-- Fan speeds
-- Download and upload speeds
-
-This provides near real-time monitoring of system performance and network traffic.
+This integration is based on the [Peplink Router API Documentation for Firmware 8.1.1](https://download.peplink.com/resources/Peplink-Router-API-Documentation-for-Firmware-8.1.1.pdf).
 
 ## API Documentation
 
