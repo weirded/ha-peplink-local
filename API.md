@@ -699,3 +699,34 @@ Example response:
     }
   ]
 }
+```
+
+#### Reading System Information
+
+https://10.10.10.1/cgi-bin/MANGA/api.cgi?infoType=device&func=status.system.info&_=1742056274776
+
+Example response: 
+```json
+{{
+  "stat": "ok",
+  "response": {
+    "device": {
+      "serialNumber": "AB12-BC34-DE56",
+      "name": "Example Site Balance 710",
+      "model": "Peplink Balance 710",
+      "descriptionSupport": "",
+      "productCode": "BPL-710",
+      "hardwareRevision": "3",
+      "firmwareVersion": "8.5.1 build 5340",
+      "host": "example-site-balance-710",
+      "pepvpnVersion": "9.2.2",
+      "modemSupport": {
+        "version": "1026",
+        "url": "http://www.peplink.com/modem/1026/UExCNzEwIEdFTkVSSUM="
+      },
+      "company": "Peplink",
+      "legal": true
+    }
+  }
+}
+```

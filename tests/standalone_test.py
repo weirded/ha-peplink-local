@@ -130,6 +130,15 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         with open(output_dir / "traffic_stats.json", "w") as f:
             json.dump(traffic_stats, f, indent=2)
         
+        # 6. Device information
+        _LOGGER.info("Fetching device information...")
+        device_info = await api.get_device_info()
+        _LOGGER.info("Device information: %s", json.dumps(device_info, indent=2))
+        
+        # Save to file
+        with open(output_dir / "device_info.json", "w") as f:
+            json.dump(device_info, f, indent=2)
+        
         _LOGGER.info("All API tests completed successfully")
         _LOGGER.info("Output files saved to %s", output_dir)
         

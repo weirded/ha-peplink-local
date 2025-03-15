@@ -500,6 +500,62 @@ class PeplinkAPI:
             _LOGGER.error("Error fetching traffic statistics: %s", e)
             return {"stats": []}
 
+    async def get_device_info(self) -> Dict[str, Any]:
+        """
+        Retrieve device information from the router.
+        
+        Returns:
+            dict: Dictionary containing device information
+                 Format: {
+                     "device_info": {
+                         "serial_number": str,
+                         "name": str,
+                         "model": str,
+                         "product_code": str,
+                         "hardware_revision": str,
+                         "firmware_version": str,
+                         "host": str,
+                         "pepvpn_version": str
+                     }
+                 }
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"device_info": {}}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting device information from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw device information from router: %s", response)
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                device_info = response["response"].get("device", {})
+                
+                if device_info:
+                    info = {
+                        "serial_number": device_info.get("serialNumber", ""),
+                        "name": device_info.get("name", ""),
+                        "model": device_info.get("model", ""),
+                        "product_code": device_info.get("productCode", ""),
+                        "hardware_revision": device_info.get("hardwareRevision", ""),
+                        "firmware_version": device_info.get("firmwareVersion", ""),
+                        "host": device_info.get("host", ""),
+                        "pepvpn_version": device_info.get("pepvpnVersion", "")
+                    }
+                    return {"device_info": info}
+            
+            _LOGGER.warning("Unexpected device information format: %s", response)
+            return {"device_info": {}}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching device information: %s", e)
+            return {"device_info": {}}
+
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
