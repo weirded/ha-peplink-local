@@ -49,6 +49,13 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
         if not await client.connect():
             raise PeplinkAuthFailed
+            
+        # Attempt to get the device name
+        device_info = await client.get_device_info()
+        device_name = None
+        if device_info and "device_info" in device_info:
+            device_name = device_info["device_info"].get("name")
+            
     except PeplinkAuthFailed as err:
         raise PeplinkAuthFailed from err
     except PeplinkSSLError as err:
@@ -59,7 +66,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise
 
     # Return info to be stored in the config entry
-    return {"title": f"Peplink Router ({data[CONF_HOST]})"}
+    # Use the device name if available, otherwise use the IP address
+    if device_name:
+        return {"title": device_name}
+    else:
+        return {"title": f"Peplink Router ({data[CONF_HOST]})"}
 
 
 class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
