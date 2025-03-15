@@ -92,6 +92,17 @@ Additionally, the following router-specific sensors are created:
 | `sensor.fan_1_speed` | Speed | Speed of the first fan in RPM (if available) |
 | `sensor.fan_2_speed` | Speed | Speed of the second fan in RPM (if available) |
 
+The following diagnostic entities provide information about your Peplink router:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.serial_number` | Sensor | Router's serial number |
+| `sensor.device_name` | Sensor | Configured device name |
+| `sensor.model` | Sensor | Router model |
+| `sensor.product_code` | Sensor | Product code |
+| `sensor.hardware_revision` | Sensor | Hardware revision number |
+| `sensor.firmware_version` | Sensor | Firmware version running on the router |
+
 Device tracker entities are also created for each client connected to your Peplink router.
 
 ## Data Refresh
