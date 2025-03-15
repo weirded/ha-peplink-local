@@ -365,7 +365,26 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
 
         self.entity_description = description
-        self._sensor_data = sensor_data
+        self._sensor_data_key = None
+        self._sensor_data_id = None
+        
+        # Store identifiers to find data in coordinator updates
+        if description.key.startswith("system_temperature"):
+            self._sensor_data_key = "thermal_sensors"
+            self._sensor_data_id = "System"  # System temperature sensor name
+        elif description.key.startswith("fan_"):
+            self._sensor_data_key = "fan_speeds"
+            # Extract fan number from key (e.g., fan_1_speed -> 1)
+            try:
+                self._sensor_data_id = description.key.split("_")[1]
+            except (IndexError, ValueError):
+                self._sensor_data_id = None
+        elif description.key.startswith("device_"):
+            self._sensor_data_key = "device_info"
+            
+        # Keep a reference to the initial data as fallback
+        self._initial_sensor_data = sensor_data
+        
         # Use IP address as the prefix for consistent entity IDs
         self._attr_unique_id = f"{coordinator.host}_{description.key}"
         
@@ -398,7 +417,31 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
         if self.entity_description.value_fn is None:
             return None
 
-        return self.entity_description.value_fn(self._sensor_data)
+        # Try to get fresh data from coordinator
+        if self.coordinator.data and self._sensor_data_key:
+            try:
+                if self._sensor_data_key == "thermal_sensors":
+                    sensors = self.coordinator.data.get("thermal_sensors", {}).get("sensors", [])
+                    for sensor in sensors:
+                        if sensor.get("name") == self._sensor_data_id:
+                            return self.entity_description.value_fn(sensor)
+                
+                elif self._sensor_data_key == "fan_speeds":
+                    fans = self.coordinator.data.get("fan_speeds", {}).get("fans", [])
+                    for fan in fans:
+                        if str(fan.get("id", "")) == self._sensor_data_id:
+                            return self.entity_description.value_fn(fan)
+                
+                elif self._sensor_data_key == "device_info":
+                    device_info = self.coordinator.data.get("device_info", {}).get("device_info", {})
+                    if device_info:
+                        return self.entity_description.value_fn(device_info)
+            except Exception:
+                # If anything goes wrong with data access, fall back to initial data
+                pass
+                
+        # Fall back to initial sensor data
+        return self.entity_description.value_fn(self._initial_sensor_data)
 
 
 class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
@@ -419,20 +462,17 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
 
         self.entity_description = description
-        self._sensor_data = sensor_data
+        self._wan_id = wan_id
+        # Keep reference to initial data
+        self._initial_sensor_data = sensor_data
+        
         # Use IP address as the prefix for consistent entity IDs
         self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
         
         # Use the device name from API if available, otherwise fallback to IP
         device_name = coordinator.device_name or f"Peplink {coordinator.host}"
         
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{coordinator.config_entry.entry_id}_wan{wan_id}")},
-            manufacturer="Peplink",
-            model="WAN Connection",
-            name=f"{device_name} WAN{wan_id}",
-            via_device=(DOMAIN, coordinator.config_entry.entry_id),
-        )
+        self._attr_device_info = device_info
         
         # Add extra attributes for IP sensor
         self._extra_attrs = {}
@@ -453,7 +493,39 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         if self.entity_description.value_fn is None:
             return None
 
-        return self.entity_description.value_fn(self._sensor_data)
+        # Check if we're dealing with traffic rate sensors
+        is_traffic_sensor = self.entity_description.key in ["download_rate", "upload_rate"]
+        
+        # Try to get fresh data from coordinator
+        if self.coordinator.data:
+            try:
+                if is_traffic_sensor:
+                    # For traffic sensors, get data from traffic_stats
+                    stats = self.coordinator.data.get("traffic_stats", {}).get("stats", [])
+                    for stat in stats:
+                        if str(stat.get("wan_id", "")) == self._wan_id:
+                            return self.entity_description.value_fn(stat)
+                else:
+                    # For other WAN sensors, get data from wan_status
+                    wan_status = self.coordinator.data.get("wan_status", {})
+                    connections = wan_status.get("connection", [])  # Use the correct key based on setup_entry
+                    
+                    for connection in connections:
+                        if str(connection.get("id", "")) == self._wan_id:
+                            # Update extra attributes if needed
+                            if self.entity_description.key == "ip":
+                                self._extra_attrs = {
+                                    "gateway": connection.get("gateway"),
+                                    "dns": connection.get("dns", []),
+                                    "mask": connection.get("mask"),
+                                }
+                            return self.entity_description.value_fn(connection)
+            except Exception:
+                # If anything goes wrong, fall back to initial data
+                pass
+                
+        # Fall back to initial sensor data
+        return self.entity_description.value_fn(self._initial_sensor_data)
         
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

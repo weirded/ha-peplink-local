@@ -108,7 +108,8 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
 
         self.entity_description = description
-        self._sensor_data = sensor_data
+        self._initial_sensor_data = sensor_data  # Keep reference to initial data as fallback
+        self._wan_id = wan_id  # Store WAN ID to find the right data in updates
         self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_binary_{coordinator.config_entry.entry_id}"
         self._attr_device_info = device_info
         
@@ -122,4 +123,19 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
         if self.entity_description.value_fn is None:
             return None
 
-        return self.entity_description.value_fn(self._sensor_data)
+        # Try to get fresh data from coordinator
+        if self.coordinator.data:
+            try:
+                # For WAN sensors, get data from wan_status
+                wan_status = self.coordinator.data.get("wan_status", {})
+                connections = wan_status.get("connection", [])
+                
+                for connection in connections:
+                    if str(connection.get("id", "")) == self._wan_id:
+                        return self.entity_description.value_fn(connection)
+            except Exception:
+                # If anything goes wrong, fall back to initial data
+                pass
+                
+        # Fall back to initial sensor data
+        return self.entity_description.value_fn(self._initial_sensor_data)
