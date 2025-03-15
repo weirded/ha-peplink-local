@@ -10,9 +10,9 @@ This custom integration allows you to monitor and track your Peplink router from
 
 ## Features
 
+- **Local Communication**: Communicates directly with your Peplink router over your local network
 - **WAN Status Sensors**: 
-  - System Temperature (temperature sensor)
-  - System Temperature Threshold (temperature sensor)
+  - Connection Status (connectivity sensor)
   - Download Rate (data rate sensor)
   - Upload Rate (data rate sensor)
   - WAN Type (text sensor)
@@ -21,10 +21,15 @@ This custom integration allows you to monitor and track your Peplink router from
   - WAN Up Since (timestamp sensor)
 - **Router Sensors**:
   - Fan Speed Sensors (speed sensors, dynamically created for each fan)
-- **Binary Sensors**:
-  - Connection Status (connectivity sensor)
+  - System Temperature (temperature sensor)
+  - System Temperature Threshold (temperature sensor) 
+  - Serial Number (diagnostic sensor)
+  - Device Name (diagnostic sensor)
+  - Model (diagnostic sensor)
+  - Product Code (diagnostic sensor)
+  - Hardware Revision (diagnostic sensor)
+  - Firmware Version (diagnostic sensor)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
-- **Local Communication**: Communicates directly with your Peplink router over your local network
 
 ## Requirements
 
@@ -59,70 +64,6 @@ This custom integration allows you to monitor and track your Peplink router from
    - **Password**: Admin password for your Peplink router
    - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
 4. Click "Submit"
-
-The integration will automatically:
-1. Connect to your Peplink router using the provided credentials
-2. Create a device for your Peplink router
-3. Create devices for each enabled WAN interface
-4. Create sensors for each WAN interface with standardized naming (WAN1, WAN2, etc.)
-5. Set up device tracking for connected clients
-
-## Available Entities
-
-For each enabled WAN interface (e.g., WAN1), the following entities are created:
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| `binary_sensor.wan1_connected` | Binary Sensor | Shows if the WAN interface is connected |
-| `sensor.wan1_name` | Sensor | The configured name of the WAN interface |
-| `sensor.wan1_message` | Sensor | Status message for the WAN interface |
-| `sensor.wan1_ip` | Sensor | Current IP address of the WAN interface (includes gateway as attribute) |
-| `sensor.wan1_connection_type` | Sensor | Type of connection (Ethernet, Cellular, etc.) |
-| `sensor.wan1_priority` | Sensor | Priority of the WAN interface for routing |
-| `sensor.wan1_up_since` | Timestamp | When the WAN interface was last connected/up since |
-| `sensor.wan1_download_speed` | Data Rate | Current download speed in megabits per second |
-| `sensor.wan1_upload_speed` | Data Rate | Current upload speed in megabits per second |
-
-Additionally, the following router-specific sensors are created:
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| `sensor.system_temperature` | Temperature | System temperature in degrees Celsius |
-| `sensor.system_temperature_threshold` | Temperature | System temperature threshold in degrees Celsius |
-| `sensor.fan_1_speed` | Speed | Speed of the first fan in RPM (if available) |
-| `sensor.fan_2_speed` | Speed | Speed of the second fan in RPM (if available) |
-
-The following diagnostic entities provide information about your Peplink router:
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| `sensor.serial_number` | Sensor | Router's serial number |
-| `sensor.device_name` | Sensor | Configured device name |
-| `sensor.model` | Sensor | Router model |
-| `sensor.product_code` | Sensor | Product code |
-| `sensor.hardware_revision` | Sensor | Hardware revision number |
-| `sensor.firmware_version` | Sensor | Firmware version running on the router |
-
-Device tracker entities are also created for each client connected to your Peplink router.
-
-## Data Refresh
-
-The integration refreshes all data from your Peplink router every 30 seconds.
-
-This integration is based on the [Peplink Router API Documentation for Firmware 8.1.1](https://download.peplink.com/resources/Peplink-Router-API-Documentation-for-Firmware-8.1.1.pdf).
-
-## API Documentation
-
-This integration is based on the [Peplink Router API Documentation for Firmware 8.1.1](https://download.peplink.com/resources/Peplink-Router-API-Documentation-for-Firmware-8.1.1.pdf).
-
-## Troubleshooting
-
-If you encounter issues with the integration:
-
-1. Check that your Peplink router is accessible at the configured IP address
-2. Verify that your username and password are correct
-4. Check the Home Assistant logs for any error messages
-5. If you see SSL errors, try disabling the "Verify SSL" option during setup
 
 ## Contributing
 
