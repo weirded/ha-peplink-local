@@ -81,6 +81,73 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         value_fn=lambda x: x.get("threshold"),
         icon="mdi:thermometer-alert",
     ),
+    # Device info sensors
+    PeplinkSensorEntityDescription(
+        key="device_serial_number",
+        translation_key=None,
+        name="Serial Number",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("serial_number"),
+        icon="mdi:barcode",
+    ),
+    PeplinkSensorEntityDescription(
+        key="device_name",
+        translation_key=None,
+        name="Device Name",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("name"),
+        icon="mdi:label",
+    ),
+    PeplinkSensorEntityDescription(
+        key="device_model",
+        translation_key=None,
+        name="Model",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("model"),
+        icon="mdi:router-wireless",
+    ),
+    PeplinkSensorEntityDescription(
+        key="device_product_code",
+        translation_key=None,
+        name="Product Code",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("product_code"),
+        icon="mdi:code-brackets",
+    ),
+    PeplinkSensorEntityDescription(
+        key="device_hardware_revision",
+        translation_key=None,
+        name="Hardware Revision",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("hardware_revision"),
+        icon="mdi:chip",
+    ),
+    PeplinkSensorEntityDescription(
+        key="device_firmware_version",
+        translation_key=None,
+        name="Firmware Version",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: x.get("firmware_version"),
+        icon="mdi:package-variant-closed",
+    ),
     # WAN traffic sensors - these will be created dynamically per WAN
     PeplinkSensorEntityDescription(
         key="wan_download_rate",
@@ -173,6 +240,19 @@ async def async_setup_entry(
                         coordinator=coordinator,
                         description=description,
                         sensor_data=sensor,
+                    )
+                )
+
+    # Add device info sensors
+    device_info = coordinator.data.get("device_info", {}).get("device_info", {})
+    if device_info:
+        for description in SENSOR_TYPES:
+            if description.key.startswith("device_"):
+                entities.append(
+                    PeplinkSensor(
+                        coordinator=coordinator,
+                        description=description,
+                        sensor_data=device_info,
                     )
                 )
 

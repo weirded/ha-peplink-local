@@ -149,6 +149,7 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_thermal_sensors(),
                 self.api.get_fan_speeds(),
                 self.api.get_traffic_stats(),
+                self.api.get_device_info(),
                 return_exceptions=True,
             )
             
@@ -156,11 +157,11 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     api_calls = ["WAN status", "client information", "thermal sensor data", 
-                                "fan speed data", "traffic statistics"]
+                                "fan speed data", "traffic statistics", "device information"]
                     raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
                 
             # Unpack results
-            wan_status, clients, thermal_sensors, fan_speeds, traffic_stats = results
+            wan_status, clients, thermal_sensors, fan_speeds, traffic_stats, device_info = results
             
             # Validate results
             if not wan_status:
@@ -173,6 +174,16 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise UpdateFailed("Failed to get fan speed data")
             if not traffic_stats:
                 raise UpdateFailed("Failed to get traffic statistics")
+            if not device_info:
+                raise UpdateFailed("Failed to get device information")
+                
+            # Update model and firmware information if available
+            device_info_data = device_info.get("device_info", {})
+            if device_info_data:
+                if device_info_data.get("model"):
+                    self.model = device_info_data["model"]
+                if device_info_data.get("firmware_version"):
+                    self.firmware = device_info_data["firmware_version"]
 
             return {
                 "wan_status": wan_status,
@@ -180,6 +191,7 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "thermal_sensors": thermal_sensors,
                 "fan_speeds": fan_speeds,
                 "traffic_stats": traffic_stats,
+                "device_info": device_info,
             }
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}")
