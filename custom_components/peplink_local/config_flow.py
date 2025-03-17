@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_POLL_FREQUENCY, DEFAULT_POLL_FREQUENCY
 from .peplink_api import PeplinkAPI, PeplinkAuthFailed, PeplinkSSLError
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,6 +23,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_VERIFY_SSL, default=True): bool,
+        vol.Optional(CONF_POLL_FREQUENCY, default=DEFAULT_POLL_FREQUENCY): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=300)
+        ),
     }
 )
 
@@ -92,7 +95,10 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
             vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
             vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): str,
-            vol.Optional(CONF_VERIFY_SSL, default=defaults.get(CONF_VERIFY_SSL, True)): bool,
+            vol.Optional(CONF_VERIFY_SSL, default=defaults.get(CONF_VERIFY_SSL, False)): bool,
+            vol.Optional(CONF_POLL_FREQUENCY, default=defaults.get(CONF_POLL_FREQUENCY, DEFAULT_POLL_FREQUENCY)): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=300)
+            ),
         })
 
         if user_input is not None:
@@ -143,6 +149,10 @@ class PeplinkLocalOptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_VERIFY_SSL,
                         default=self.entry.data.get(CONF_VERIFY_SSL, True),
                     ): bool,
+                    vol.Optional(
+                        CONF_POLL_FREQUENCY,
+                        default=self.entry.data.get(CONF_POLL_FREQUENCY, DEFAULT_POLL_FREQUENCY),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
                 }
             ),
         )

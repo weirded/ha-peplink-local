@@ -8,7 +8,8 @@
           "host": "IP Address",
           "username": "Username",
           "password": "Password",
-          "verify_ssl": "Verify SSL Certificate"
+          "verify_ssl": "Verify SSL Certificate",
+          "poll_frequency": "Polling Frequency"
         }
       }
     },
@@ -28,7 +29,8 @@
         "title": "Configure Peplink Router",
         "description": "Update your Peplink router integration settings.",
         "data": {
-          "verify_ssl": "Verify SSL Certificate"
+          "verify_ssl": "Verify SSL Certificate",
+          "poll_frequency": "Polling Frequency"
         }
       }
     }

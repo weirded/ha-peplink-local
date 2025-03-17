@@ -7,10 +7,12 @@ CONF_HOST = "host"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_VERIFY_SSL = "verify_ssl"
+CONF_POLL_FREQUENCY = "poll_frequency"
 
 # Defaults
 DEFAULT_PORT = 443
 DEFAULT_VERIFY_SSL = False
+DEFAULT_POLL_FREQUENCY = 5  # seconds
 SCAN_INTERVAL = 30  # seconds
 
 # Attributes

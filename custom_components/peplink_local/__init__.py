@@ -22,7 +22,12 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, SCAN_INTERVAL
+from .const import (
+    DOMAIN,
+    CONF_POLL_FREQUENCY,
+    DEFAULT_POLL_FREQUENCY,
+    SCAN_INTERVAL,
+)
 from .peplink_api import PeplinkAPI, PeplinkAuthFailed
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +48,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
+    
+    # Get poll frequency from config, fall back to default if not specified
+    poll_frequency = entry.data.get(CONF_POLL_FREQUENCY, DEFAULT_POLL_FREQUENCY)
 
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
 
@@ -62,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass=hass,
             logger=_LOGGER,
             name=f"Peplink {host}",
-            update_interval=timedelta(seconds=SCAN_INTERVAL),
+            update_interval=timedelta(seconds=poll_frequency),
             api=api,
             config_entry=entry,
         )
