@@ -26,6 +26,11 @@ This custom integration allows you to monitor and track your Peplink router from
   - Serial Number (diagnostic sensor)
   - Device Name (diagnostic sensor)
   - Firmware Version (diagnostic sensor)
+- **GPS Tracking** (for GPS-enabled Peplink routers):
+  - Device Tracker Entity (for mapping and zone detection)
+  - Speed Sensor (meters per second)
+  - Altitude Sensor (meters)
+  - Heading Sensor (degrees)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
 - **Traffic Statistics**:
   - WAN Download (data rate sensor)
@@ -38,6 +43,7 @@ This custom integration allows you to monitor and track your Peplink router from
 
 - The router must be accessible on your local network
 - Valid admin credentials for your Peplink router
+- Peplink firmware version 8.1.1 or higher
 
 ## Installation
 
@@ -68,6 +74,14 @@ This custom integration allows you to monitor and track your Peplink router from
    - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
    - **Polling Frequency** (optional): How often to poll the router for updates (in seconds, default: 5)
 4. Click "Submit"
+
+## GPS Features
+
+The GPS tracking features are automatically enabled when your Peplink router has GPS capabilities. This is particularly useful for mobile routers like MAX Transit or MAX BR1 series with cellular connectivity.
+
+- **Device Tracker**: The router's GPS location will appear on your Home Assistant map and can be used with zones
+- **Sensors**: Speed, altitude and heading sensors provide additional data about the router's movement and orientation
+- **Accuracy**: GPS accuracy is calculated based on horizontal dilution of precision (HDOP) when available
 
 ## Contributing
 

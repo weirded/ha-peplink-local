@@ -175,17 +175,18 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_clients(),
                 self.api.get_system_info(),  # Combined system info call
                 self.api.get_traffic_stats(),
+                self.api.get_location(),      # Get location data from GPS
                 return_exceptions=True,
             )
             
             # Check results for exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    api_calls = ["WAN status", "client information", "system information", "traffic statistics"]
+                    api_calls = ["WAN status", "client information", "system information", "traffic statistics", "location information"]
                     raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
                 
             # Unpack results
-            wan_status, clients, system_info, traffic_stats = results
+            wan_status, clients, system_info, traffic_stats, location_info = results
             
             # Extract components from the combined system_info call
             thermal_sensors = system_info.get("thermal_sensors", {"sensors": []})
@@ -227,7 +228,8 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "fan_speeds": fan_speeds,
                 "traffic_stats": traffic_stats,
                 "device_info": device_info_data,
-                "system_time": system_time
+                "system_time": system_time,
+                "location_info": location_info
             }
                 
         except Exception as e:

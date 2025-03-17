@@ -23,6 +23,8 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfDataRate,
     UnitOfTime,
+    UnitOfLength,
+    UnitOfSpeed,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -249,6 +251,37 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         icon="mdi:wifi-settings",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # GPS Location sensors
+    PeplinkSensorEntityDescription(
+        key="heading",
+        translation_key=None,
+        name="Heading",
+        native_unit_of_measurement="°",
+        device_class=None,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: x.get('heading'),
+        icon="mdi:compass",
+    ),
+    PeplinkSensorEntityDescription(
+        key="speed",
+        translation_key=None,
+        name="Speed",
+        native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        device_class=SensorDeviceClass.SPEED,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: x.get('speed'),
+        icon="mdi:speedometer",
+    ),
+    PeplinkSensorEntityDescription(
+        key="altitude",
+        translation_key=None,
+        name="Altitude",
+        native_unit_of_measurement=UnitOfLength.METERS,
+        device_class=SensorDeviceClass.DISTANCE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: x.get('altitude'),
+        icon="mdi:arrow-up-bold",
+    ),
 )
 
 
@@ -417,7 +450,7 @@ async def async_setup_entry(
                     if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message", "wan_uptime"]:
                         # Create a copy of the description for this specific WAN
                         sensor_description = PeplinkSensorEntityDescription(
-                            key=f"{description.key.replace('wan_', '')}",
+                            key=description.key.replace("wan_", ""),
                             translation_key=description.translation_key,
                             name=description.name,
                             native_unit_of_measurement=description.native_unit_of_measurement,
@@ -435,32 +468,48 @@ async def async_setup_entry(
                                 wan_id=wan_id,
                             )
                         )
-
-                # Add WiFi specific sensors if this is a WiFi WAN connection
-                if wan_connection.get("type") == "wifi":
-                    for description in SENSOR_TYPES:
-                        if description.key.startswith("wifi_"):
-                            # Create a copy of the description for this specific WiFi WAN
-                            sensor_description = PeplinkSensorEntityDescription(
-                                key=description.key,
-                                translation_key=description.translation_key,
-                                name=description.name,
-                                native_unit_of_measurement=description.native_unit_of_measurement,
-                                device_class=description.device_class,
-                                state_class=description.state_class,
-                                icon=description.icon,
-                                value_fn=description.value_fn,
+                        
+                # Handle uptime - if available in data
+                if "uptime" in wan_connection:
+                    uptime_description = next(
+                        (d for d in SENSOR_TYPES if d.key == "wan_up_since"), None
+                    )
+                    if uptime_description:
+                        sensor_description = PeplinkSensorEntityDescription(
+                            key=uptime_description.key.replace("wan_", ""),
+                            translation_key=uptime_description.translation_key,
+                            name=uptime_description.name,
+                            native_unit_of_measurement=uptime_description.native_unit_of_measurement,
+                            device_class=uptime_description.device_class,
+                            state_class=uptime_description.state_class,
+                            icon=uptime_description.icon,
+                            value_fn=uptime_description.value_fn,
+                        )
+                        entities.append(
+                            PeplinkWANSensor(
+                                coordinator=coordinator,
+                                description=sensor_description,
+                                sensor_data=wan_connection,
+                                device_info=device_info,
+                                wan_id=wan_id,
                             )
-                            entities.append(
-                                PeplinkWANSensor(
-                                    coordinator=coordinator,
-                                    description=sensor_description,
-                                    sensor_data=wan_connection,
-                                    device_info=device_info,
-                                    wan_id=wan_id,
-                                )
-                            )
+                        )
 
+    # Add GPS location sensors
+    if coordinator.data.get("location_info", {}).get("gps", False):
+        location_data = coordinator.data["location_info"].get("location", {})
+        if location_data:
+            for description in SENSOR_TYPES:
+                if description.key in ["heading", "speed", "altitude"]:
+                    entities.append(
+                        PeplinkSensor(
+                            coordinator=coordinator,
+                            description=description,
+                            sensor_data=location_data,
+                        )
+                    )
+
+    # Add all entities
     async_add_entities(entities)
 
 
@@ -496,6 +545,8 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
                 self._sensor_data_id = None
         elif description.key.startswith("device_"):
             self._sensor_data_key = "device_info"
+        elif description.key in ["heading", "speed", "altitude"]:
+            self._sensor_data_key = "location_info"
             
         # Keep a reference to the initial data as fallback
         self._initial_sensor_data = sensor_data
@@ -527,36 +578,63 @@ class PeplinkSensor(CoordinatorEntity, SensorEntity):
             self._attr_icon = description.icon
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
         """Return the state of the sensor."""
-        if self.entity_description.value_fn is None:
-            return None
-
-        # Try to get fresh data from coordinator
-        if self.coordinator.data and self._sensor_data_key:
-            try:
-                if self._sensor_data_key == "thermal_sensors":
+        value = None
+        
+        if self.coordinator.data:
+            # Handle location data differently
+            if self.entity_description.key in ["heading", "speed", "altitude"]:
+                location_data = self.coordinator.data.get("location_info", {}).get("location", {})
+                if location_data and self.entity_description.value_fn:
+                    value = self.entity_description.value_fn(location_data)
+            # Check if we need to extract from a specific data category
+            elif self._sensor_data_key:
+                # Handle system-level bandwidth sensors
+                if self.entity_description.key.startswith("system_") and self.entity_description.key in ["system_download_rate", "system_upload_rate"]:
+                    raw_traffic_data = self.coordinator.data.get("traffic_stats", {}).get("stats", [])
+                    if raw_traffic_data and self.entity_description.value_fn:
+                        # Prepare system-level traffic data
+                        system_traffic_data = {
+                            "rx_rate": 0,
+                            "tx_rate": 0,
+                        }
+                        # Sum up all WAN interfaces data
+                        for wan in raw_traffic_data:
+                            system_traffic_data["rx_rate"] += wan.get("rx_rate", 0)
+                            system_traffic_data["tx_rate"] += wan.get("tx_rate", 0)
+                        
+                        value = self.entity_description.value_fn(system_traffic_data)
+                # Handle thermal sensors
+                elif self._sensor_data_key == "thermal_sensors":
                     sensors = self.coordinator.data.get("thermal_sensors", {}).get("sensors", [])
                     for sensor in sensors:
                         if sensor.get("name") == self._sensor_data_id:
-                            return self.entity_description.value_fn(sensor)
-                
+                            if self.entity_description.value_fn:
+                                value = self.entity_description.value_fn(sensor)
+                            break
+                # Handle fan speeds
                 elif self._sensor_data_key == "fan_speeds":
                     fans = self.coordinator.data.get("fan_speeds", {}).get("fans", [])
-                    for fan in fans:
-                        if str(fan.get("id", "")) == self._sensor_data_id:
-                            return self.entity_description.value_fn(fan)
-                
+                    for i, fan in enumerate(fans, 1):
+                        if str(i) == str(self._sensor_data_id):
+                            if self.entity_description.value_fn:
+                                value = self.entity_description.value_fn(fan)
+                            break
+                # Handle device info
                 elif self._sensor_data_key == "device_info":
-                    device_info = self.coordinator.data.get("device_info", {}).get("device_info", {})
-                    if device_info:
-                        return self.entity_description.value_fn(device_info)
-            except Exception:
-                # If anything goes wrong with data access, fall back to initial data
-                pass
-                
-        # Fall back to initial sensor data
-        return self.entity_description.value_fn(self._initial_sensor_data)
+                    device_info = self.coordinator.data.get("device_info", {})
+                    if device_info and self.entity_description.value_fn:
+                        value = self.entity_description.value_fn(device_info)
+            # Handle sensors with no specific data category
+            elif self.entity_description.value_fn:
+                value = self.entity_description.value_fn(self._initial_sensor_data)
+        
+        # Fallback to initial data if no value found
+        if value is None and self.entity_description.value_fn:
+            value = self.entity_description.value_fn(self._initial_sensor_data)
+            
+        return value
 
 
 class PeplinkWANSensor(CoordinatorEntity, SensorEntity):

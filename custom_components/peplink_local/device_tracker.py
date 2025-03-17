@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set
 
 from homeassistant.components.device_tracker.const import SourceType
-from homeassistant.components.device_tracker import ScannerEntity
+from homeassistant.components.device_tracker import ScannerEntity, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -35,6 +35,18 @@ async def async_setup_entry(
     
     entities = []
     
+    # Add GPS device tracker for the router itself
+    if coordinator.data and "location_info" in coordinator.data and coordinator.data["location_info"].get("gps", False):
+        location_data = coordinator.data["location_info"].get("location", {})
+        if location_data and "latitude" in location_data and "longitude" in location_data:
+            _LOGGER.debug("Creating GPS device tracker for Peplink router")
+            entities.append(
+                PeplinkGPSTracker(
+                    coordinator=coordinator, 
+                    config_entry_id=entry.entry_id
+                )
+            )
+    
     # Create a device tracker for each client
     if coordinator.data and "clients" in coordinator.data:
         _LOGGER.debug("Client data found in coordinator: %s", coordinator.data["clients"])
@@ -62,10 +74,100 @@ async def async_setup_entry(
         _LOGGER.warning("No client data found in coordinator data: %s", coordinator.data)
     
     if entities:
-        _LOGGER.debug("Adding %d Peplink client device trackers", len(entities))
+        _LOGGER.debug("Adding %d Peplink device trackers", len(entities))
         async_add_entities(entities, True)
     else:
-        _LOGGER.warning("No Peplink client device trackers created")
+        _LOGGER.warning("No Peplink device trackers created")
+
+
+class PeplinkGPSTracker(CoordinatorEntity, TrackerEntity):
+    """Representation of the Peplink router GPS location."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        config_entry_id: str,
+    ):
+        """Initialize the GPS tracker."""
+        super().__init__(coordinator)
+        self._config_entry_id = config_entry_id
+        self._attr_unique_id = f"{coordinator.host}_gps"
+        self._attr_name = "GPS Location"
+        self._latitude = None
+        self._longitude = None
+        self._attributes = {}
+        
+        # Update initial state
+        self._update_gps_data()
+    
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this Peplink router."""
+        # Get the coordinator
+        coordinator = self.coordinator
+        
+        # Use device name from API if available
+        device_name = coordinator.device_name if hasattr(coordinator, "device_name") and coordinator.device_name else f"Peplink {coordinator.host}" if hasattr(coordinator, "host") else "Peplink"
+        
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._config_entry_id)},
+            manufacturer="Peplink",
+            model=coordinator.model if hasattr(coordinator, "model") else "Router",
+            name=device_name,
+            sw_version=coordinator.firmware if hasattr(coordinator, "firmware") else None,
+        )
+
+    @property
+    def source_type(self) -> str:
+        """Return the source type of the device."""
+        return SourceType.GPS
+    
+    @property
+    def latitude(self) -> Optional[float]:
+        """Return the latitude of the device."""
+        return self._latitude
+    
+    @property
+    def longitude(self) -> Optional[float]:
+        """Return the longitude of the device."""
+        return self._longitude
+    
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the device state attributes."""
+        return self._attributes
+    
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._update_gps_data()
+        self.async_write_ha_state()
+    
+    def _update_gps_data(self) -> None:
+        """Update GPS data from the coordinator."""
+        self._latitude = None
+        self._longitude = None
+        self._attributes = {}
+        
+        if (
+            self.coordinator.data
+            and "location_info" in self.coordinator.data
+            and "location" in self.coordinator.data["location_info"]
+        ):
+            location_data = self.coordinator.data["location_info"]["location"]
+            self._latitude = location_data.get("latitude")
+            self._longitude = location_data.get("longitude")
+            
+            # Add accuracy if available
+            if "accuracy" in location_data:
+                self._attributes["gps_accuracy"] = location_data["accuracy"]
+                
+            # Add other attributes that might be useful
+            for key, value in location_data.items():
+                if key not in ["latitude", "longitude", "accuracy"]:
+                    self._attributes[key] = value
 
 
 class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):

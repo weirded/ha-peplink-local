@@ -677,14 +677,15 @@ class PeplinkAPI:
         
         try:
             # URL for traffic statistics query
-            endpoint = "/cgi-bin/MANGA/api.cgi?func=wan.statistics"
+            endpoint = f"/cgi-bin/MANGA/api.cgi?func=status.traffic&_={int(time.time() * 1000)}"
             
             _LOGGER.debug("Requesting traffic statistics from %s", endpoint)
             response = await self._api_request(endpoint)
             
             if "stat" in response and response["stat"] == "ok" and "response" in response:
                 stats_data = response["response"]
-                
+                _LOGGER.debug("Received traffic statistics data: %s", stats_data)
+
                 # Format the statistics data into a consistent structure
                 wan_stats = []
                 for wan_id, wan_data in stats_data.items():
@@ -730,6 +731,8 @@ class PeplinkAPI:
                         "longitude": float,
                         "altitude": float,
                         "speed": float,
+                        "heading": float,
+                        "accuracy": float,
                         "pdop": float,
                         "hdop": float,
                         "vdop": float
@@ -751,6 +754,26 @@ class PeplinkAPI:
             if "stat" in response and response["stat"] == "ok" and "response" in response:
                 location_data = response["response"]
                 _LOGGER.debug("Received location data: %s", location_data)
+                
+                # Process the location data to ensure consistent attribute names
+                if "location" in location_data and location_data.get("gps", False):
+                    loc = location_data["location"]
+                    
+                    # Calculate GPS accuracy from horizontal dilution of precision if available
+                    if "hdop" in loc and loc.get("hdop") is not None:
+                        # GPS accuracy is typically estimated as HDOP * base_precision
+                        # Using 5 meters as the base precision
+                        loc["accuracy"] = float(loc["hdop"]) * 5.0
+                    
+                    # Ensure heading is present (might be called 'direction' or 'heading' in the API)
+                    if "heading" not in loc and "direction" in loc:
+                        loc["heading"] = loc["direction"]
+                    elif "heading" not in loc and "course" in loc:
+                        loc["heading"] = loc["course"]
+                    elif "heading" not in loc:
+                        # Default heading if not available
+                        loc["heading"] = None
+                
                 return location_data
             
             _LOGGER.warning("Unexpected location data format: %s", response)
