@@ -121,6 +121,15 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         with open(output_dir / "traffic_stats.json", "w") as f:
             json.dump(traffic_stats, f, indent=2)
         
+        # 5. Location information from GPS (separate API call)
+        _LOGGER.info("Fetching location information...")
+        location_info = await api.get_location()
+        _LOGGER.info("Location information: %s", json.dumps(location_info, indent=2))
+        
+        # Save to file
+        with open(output_dir / "location_info.json", "w") as f:
+            json.dump(location_info, f, indent=2)
+        
         _LOGGER.info("All API tests completed successfully")
         _LOGGER.info("Output files saved to %s", output_dir)
         

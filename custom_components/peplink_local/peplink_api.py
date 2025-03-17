@@ -675,49 +675,91 @@ class PeplinkAPI:
             _LOGGER.error("Failed to connect to Peplink router")
             return {"stats": []}
         
-        session = await self._get_session()
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.traffic&_={int(time.time() * 1000)}")
-        
         try:
-            _LOGGER.debug("Requesting traffic statistics from %s", url)
-            response = await self._api_request(url)
+            # URL for traffic statistics query
+            endpoint = "/cgi-bin/MANGA/api.cgi?func=wan.statistics"
             
-            _LOGGER.debug("Raw traffic statistics from router: %s", response)
+            _LOGGER.debug("Requesting traffic statistics from %s", endpoint)
+            response = await self._api_request(endpoint)
+            
+            if "stat" in response and response["stat"] == "ok" and "response" in response:
+                stats_data = response["response"]
                 
-            # Process the response
-            if response.get("stat") == "ok" and "response" in response:
-                stats = []
-                traffic_data = response["response"].get("traffic", {})
-                bandwidth_data = response["response"].get("bandwidth", {})
-                
-                # Get the list of WAN IDs in order
-                wan_ids = traffic_data.get("order", [])
-                
-                for wan_id in wan_ids:
-                    wan_id_str = str(wan_id)
-                    traffic = traffic_data.get(wan_id_str, {})
-                    bandwidth = bandwidth_data.get(wan_id_str, {})
+                # Format the statistics data into a consistent structure
+                wan_stats = []
+                for wan_id, wan_data in stats_data.items():
+                    # Skip non-WAN keys
+                    if not isinstance(wan_id, str) or not wan_id.isdigit():
+                        continue
                     
-                    if traffic and bandwidth:
-                        stats.append({
-                            "wan_id": wan_id_str,
-                            "name": traffic.get("name", f"WAN {wan_id}"),
-                            "rx_bytes": int(traffic.get("overall", {}).get("download", 0)) * 1024 * 1024,  # Convert MB to bytes
-                            "tx_bytes": int(traffic.get("overall", {}).get("upload", 0)) * 1024 * 1024,    # Convert MB to bytes
-                            "rx_rate": int(bandwidth.get("overall", {}).get("download", 0)) * 1024,        # Convert kbps to bps
-                            "tx_rate": int(bandwidth.get("overall", {}).get("upload", 0)) * 1024,          # Convert kbps to bps
-                            "unit": "bytes"
-                        })
+                    # Extract relevant statistics
+                    stats_entry = {
+                        "wan_id": wan_id,
+                        "name": wan_data.get("name", f"WAN {wan_id}"),
+                        "rx_bytes": wan_data.get("rx", 0),
+                        "tx_bytes": wan_data.get("tx", 0),
+                        "rx_rate": wan_data.get("rx_rate", 0),
+                        "tx_rate": wan_data.get("tx_rate", 0),
+                        "unit": "bytes"
+                    }
+                    wan_stats.append(stats_entry)
                 
-                return {"stats": stats}
-            else:
-                _LOGGER.warning("Unexpected traffic statistics format: %s", response)
-                return {"stats": []}
-                    
+                _LOGGER.debug("Processed traffic stats for %d WAN interfaces", len(wan_stats))
+                return {"stats": wan_stats}
+            
+            _LOGGER.warning("Unexpected traffic statistics data format: %s", response)
+            return {"stats": []}
+            
         except Exception as e:
-            _LOGGER.error("Error fetching traffic statistics: %s", e)
+            _LOGGER.error("Error retrieving traffic statistics: %s", e)
             return {"stats": []}
 
+    async def get_location(self) -> Dict[str, Any]:
+        """
+        Retrieve location information from the router using GPS data.
+        
+        Returns:
+            dict: Dictionary containing location information
+                Format: {
+                    "gps": bool,
+                    "type": str,
+                    "location": {
+                        "timeElapsed": int,
+                        "timestamp": int,
+                        "latitude": float,
+                        "longitude": float,
+                        "altitude": float,
+                        "speed": float,
+                        "pdop": float,
+                        "hdop": float,
+                        "vdop": float
+                    }
+                }
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"gps": False, "type": "Unknown", "location": {}}
+        
+        try:
+            # URL for location information query with timestamp to prevent caching
+            timestamp = int(time.time() * 1000)
+            endpoint = f"/cgi-bin/MANGA/api.cgi?func=info.location&_={timestamp}"
+            
+            _LOGGER.debug("Requesting location information from %s", endpoint)
+            response = await self._api_request(endpoint)
+            
+            if "stat" in response and response["stat"] == "ok" and "response" in response:
+                location_data = response["response"]
+                _LOGGER.debug("Received location data: %s", location_data)
+                return location_data
+            
+            _LOGGER.warning("Unexpected location data format: %s", response)
+            return {"gps": False, "type": "Unknown", "location": {}}
+            
+        except Exception as e:
+            _LOGGER.error("Error retrieving location information: %s", e)
+            return {"gps": False, "type": "Unknown", "location": {}}
+            
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
