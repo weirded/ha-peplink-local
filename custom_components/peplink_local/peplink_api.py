@@ -180,9 +180,17 @@ class PeplinkAPI:
             self._connected = False
             return False
 
-    async def ensure_connected(self) -> bool:
-        """Ensure that a connection has been established."""
-        if not self._connected:
+    async def ensure_connected(self, force_reconnect: bool = False) -> bool:
+        """Ensure that a connection has been established.
+        
+        Args:
+            force_reconnect: If True, will reconnect even if already connected
+        
+        Returns:
+            bool: True if successfully connected, False otherwise
+        """
+        if not self._connected or force_reconnect:
+            self._connected = False  # Reset connected state if forcing reconnect
             return await self.connect()
         return True
     
@@ -208,9 +216,8 @@ class PeplinkAPI:
                 # Check for authentication error
                 if response.status == 401:
                     _LOGGER.error("API error: Unauthorized (code: 401)")
-                    # Try to reconnect and retry the request
-                    self._connected = False
-                    if await self.connect():
+                    # Try to reconnect with force flag and retry the request
+                    if await self.ensure_connected(force_reconnect=True):
                         _LOGGER.debug("Successfully reconnected, retrying request")
                         headers = {}
                         if self._auth_cookie:
@@ -220,15 +227,39 @@ class PeplinkAPI:
                                 _LOGGER.error("Still unauthorized after reconnect attempt")
                                 raise Exception("Unauthorized (code: 401)")
                             retry_response.raise_for_status()
-                            return await retry_response.json()
+                            response_data = await retry_response.json()
+                            if response_data.get("stat") == "fail" and response_data.get("code") == 401:
+                                _LOGGER.error("Authentication failed with API error 401 after reconnect")
+                                raise Exception("Unauthorized API response (code: 401)")
+                            return response_data
                     else:
-                        raise Exception("Unauthorized (code: 401)")
+                        raise Exception("Failed to reconnect, unauthorized (code: 401)")
                 
                 # Raise other HTTP errors
                 response.raise_for_status()
                 
+                # Check for API-level auth errors in response
+                response_data = await response.json()
+                if response_data.get("stat") == "fail" and response_data.get("code") == 401:
+                    _LOGGER.error("Authentication failed with API error 401")
+                    # Try to reconnect with force flag and retry
+                    if await self.ensure_connected(force_reconnect=True):
+                        _LOGGER.debug("Successfully reconnected after API 401, retrying request")
+                        headers = {}
+                        if self._auth_cookie:
+                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        async with session.request(method, url, json=data, headers=headers) as retry_response:
+                            retry_response.raise_for_status()
+                            retry_data = await retry_response.json()
+                            if retry_data.get("stat") == "fail" and retry_data.get("code") == 401:
+                                _LOGGER.error("Still getting API-level 401 after reconnect")
+                                raise Exception("Unauthorized API response after reconnect (code: 401)")
+                            return retry_data
+                    else:
+                        raise Exception("Failed to reconnect for API-level 401 error")
+                
                 # Return parsed JSON response
-                return await response.json()
+                return response_data
                 
         except aiohttp.ClientError as e:
             _LOGGER.error("API request error: %s", e)
