@@ -265,26 +265,97 @@ class PeplinkAPI:
             _LOGGER.error("API request error: %s", e)
             raise Exception(f"API request error: {e}")
 
+    async def _format_api_url(self, func: str, public_api: bool = False, **kwargs) -> str:
+        """Format an API URL based on the function pattern and additional parameters.
+        
+        Args:
+            func: The API function to call (e.g., 'status.client' or 'status.traffic')
+            public_api: If True, use the /api/ style endpoint, otherwise use the cgi-bin style
+            **kwargs: Additional URL parameters to include
+            
+        Returns:
+            str: Formatted API URL
+        """
+        if public_api:
+            # Use "/api/..." style endpoint
+            # Remove leading slash if present to ensure consistent formatting
+            if func.startswith('/'):
+                func = func[1:]
+            endpoint = f"/api/{func}"
+        else:
+            # Use "/cgi-bin/MANGA/api.cgi?func=..." style endpoint
+            # Add timestamp to prevent caching
+            params = {
+                "func": func,
+                "_": str(int(time.time() * 1000))
+            }
+            
+            # Add any additional parameters
+            params.update(kwargs)
+            
+            # Build query string
+            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            endpoint = f"/cgi-bin/MANGA/api.cgi?{query_string}"
+            
+        return endpoint
+    
+    async def _make_api_request(self, func: str, public_api: bool = False, method: str = "GET", data: Optional[Dict] = None, **kwargs) -> Dict:
+        """Make an API request with proper URL formatting, authentication, and logging.
+        
+        Args:
+            func: The API function to call (e.g., 'status.client' or 'status.traffic')
+            public_api: If True, use the /api/ style endpoint, otherwise use the cgi-bin style
+            method: HTTP method to use (default: GET)
+            data: Optional JSON data for POST requests
+            **kwargs: Additional URL parameters to include
+            
+        Returns:
+            Dict: The unmodified JSON response from the API
+        """
+        # Ensure we're authenticated
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            raise Exception("Not connected to Peplink router")
+            
+        # Format the URL
+        endpoint = await self._format_api_url(func, public_api=public_api, **kwargs)
+        
+        # Perform the API request
+        _LOGGER.debug("Requesting data from %s", endpoint)
+        response = await self._api_request(endpoint, method=method, data=data)
+        
+        # Log the response
+        _LOGGER.debug("Raw data from router: %s", response)
+        
+        # Return the unmodified JSON response
+        return response
+
     async def get_wan_status(self) -> Dict[str, Any]:
         """
         Retrieve WAN status for all WAN links.
         
         Returns:
             dict: Dictionary containing WAN status information
+                 Format: {
+                     "connection": [
+                         {
+                             "id": str,           # WAN interface ID
+                             "name": str,         # WAN interface name
+                             "status": str,       # Connection status (e.g., "connected", "disconnected")
+                             "type": str,         # WAN connection type
+                             "ipAddress": str,    # IP address if connected
+                             "gateway": str,      # Gateway IP address
+                             "dns": list,         # List of DNS servers
+                             "mac": str,          # MAC address of the WAN interface
+                             # Additional fields may be present depending on the router model
+                         },
+                         # Additional WAN connections...
+                     ]
+                 }
         """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"connection": []}
-        
-        session = await self._get_session()
-        wan_url = urljoin(self.base_url, "/api/status.wan")
-        
         try:
-            _LOGGER.debug("Requesting WAN status from %s", wan_url)
-            response = await self._api_request(wan_url)
+            response = await self._make_api_request("status.wan", public_api=True)
             
-            _LOGGER.debug("Raw WAN data from router: %s", response)
-                
             # Check for error response
             if "stat" in response and response["stat"] == "fail":
                 _LOGGER.error("API error: %s (code: %s)", 
@@ -332,20 +403,26 @@ class PeplinkAPI:
         
         Returns:
             dict: Dictionary containing client information
+                 Format: {
+                     "client": [
+                         {
+                             "mac": str,           # MAC address of the client
+                             "name": str,          # Client name or hostname
+                             "ip": str,            # IP address assigned to the client
+                             "rssi": int,          # Signal strength (for wireless clients)
+                             "connected": bool,    # Always True for connected clients
+                             "interface": str,     # Network interface the client is connected to
+                             "vlan": str,          # VLAN the client is connected to (if applicable)
+                             "ssid": str,          # Wireless SSID (for wireless clients)
+                             # Additional fields may be present depending on the router model
+                         },
+                         # Additional clients...
+                     ]
+                 }
         """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"client": []}
-        
-        session = await self._get_session()
-        clients_url = urljoin(self.base_url, "/api/status.client")
-        
         try:
-            _LOGGER.debug("Requesting client status from %s", clients_url)
-            response = await self._api_request(clients_url)
+            response = await self._make_api_request("status.client", public_api=True)
             
-            _LOGGER.debug("Raw client data from router: %s", response)
-                
             # Check for error response
             if "stat" in response and response["stat"] == "fail":
                 _LOGGER.error("API error: %s (code: %s)", 
@@ -381,7 +458,7 @@ class PeplinkAPI:
         except json.JSONDecodeError:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
-    
+
     async def get_system_info(self) -> Dict[str, Any]:
         """
         Retrieve combined system information from the router including device info, thermal sensors, and fan speeds.
@@ -389,31 +466,50 @@ class PeplinkAPI:
         Returns:
             dict: Dictionary containing combined system information
                  Format: {
-                     "device_info": {...},
-                     "thermal_sensors": {...},
-                     "fan_speeds": {...},
-                     "system_time": {...}
+                     "device_info": {
+                         "serial_number": str,      # Router serial number
+                         "name": str,               # Router hostname
+                         "model": str,              # Router model
+                         "product_code": str,       # Product code
+                         "hardware_revision": str,  # Hardware revision
+                         "firmware_version": str,   # Firmware version
+                         "host": str,               # Host address
+                         "pepvpn_version": str      # PepVPN version
+                     },
+                     "thermal_sensors": {
+                         "sensors": [
+                             {
+                                 "name": str,        # Sensor name
+                                 "temperature": float, # Current temperature
+                                 "unit": str,        # Temperature unit (C)
+                                 "min": float,       # Minimum temperature
+                                 "max": float,       # Maximum temperature
+                                 "threshold": float  # Temperature threshold
+                             }
+                         ]
+                     },
+                     "fan_speeds": {
+                         "fans": [
+                             {
+                                 "name": str,        # Fan name
+                                 "speed": int,       # Current speed
+                                 "unit": str,        # Speed unit (RPM)
+                                 "max_speed": int,   # Maximum speed
+                                 "percentage": float # Speed as percentage of maximum
+                             }
+                         ]
+                     },
+                     "system_time": {
+                         "time_string": str,        # Formatted time string
+                         "timestamp": int,          # UNIX timestamp
+                         "timezone": str            # Timezone
+                     }
                  }
         """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {
-                "device_info": {},
-                "thermal_sensors": {"sensors": []},
-                "fan_speeds": {"fans": []},
-                "system_time": {}
-            }
-        
-        session = await self._get_session()
-        # Combined info types in a single request
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device%20systemTime%20thermalSensor%20fanSpeed&_={int(time.time() * 1000)}")
-        
         try:
-            _LOGGER.debug("Requesting combined system information from %s", url)
-            response = await self._api_request(url)
-            
-            _LOGGER.debug("Raw combined system information from router: %s", response)
-            
+            # Combined info types in a single request
+            response = await self._make_api_request("status.system.info", public_api=False, infoType="device%20systemTime%20thermalSensor%20fanSpeed")
+                
             result = {
                 "device_info": {},
                 "thermal_sensors": {"sensors": []},
@@ -492,7 +588,18 @@ class PeplinkAPI:
         
         Returns:
             dict: Dictionary containing thermal sensor information
-                 Format: {"sensors": [{"name": str, "temperature": float, "unit": str, "min": float, "max": float, "threshold": float}]}
+                 Format: {
+                     "sensors": [
+                         {
+                             "name": str,          # Sensor name
+                             "temperature": float,  # Current temperature
+                             "unit": str,           # Temperature unit (C)
+                             "min": float,          # Minimum temperature
+                             "max": float,          # Maximum temperature
+                             "threshold": float     # Temperature threshold
+                         }
+                     ]
+                 }
         """
         # Try to get data from the combined system info call for efficiency
         try:
@@ -503,18 +610,8 @@ class PeplinkAPI:
             _LOGGER.warning("Error getting thermal sensors from combined call, falling back to dedicated call: %s", e)
         
         # Fallback to the original method if combined call fails
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"sensors": []}
-        
-        session = await self._get_session()
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=thermalSensor&_={int(time.time() * 1000)}")
-        
         try:
-            _LOGGER.debug("Requesting thermal sensor data from %s", url)
-            response = await self._api_request(url)
-            
-            _LOGGER.debug("Raw thermal sensor data from router: %s", response)
+            response = await self._make_api_request("status.system.info", public_api=False, infoType="thermalSensor")
                 
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
@@ -543,7 +640,17 @@ class PeplinkAPI:
         
         Returns:
             dict: Dictionary containing fan speed information
-                 Format: {"fans": [{"name": str, "speed": int, "unit": str, "max_speed": int, "percentage": float}]}
+                 Format: {
+                     "fans": [
+                         {
+                             "name": str,          # Fan name
+                             "speed": int,          # Current speed
+                             "unit": str,           # Speed unit (RPM)
+                             "max_speed": int,      # Maximum speed
+                             "percentage": float    # Speed as percentage of maximum
+                         }
+                     ]
+                 }
         """
         # Try to get data from the combined system info call for efficiency
         try:
@@ -554,18 +661,8 @@ class PeplinkAPI:
             _LOGGER.warning("Error getting fan speeds from combined call, falling back to dedicated call: %s", e)
             
         # Fallback to the original method if combined call fails
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"fans": []}
-        
-        session = await self._get_session()
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=fanSpeed&_={int(time.time() * 1000)}")
-        
         try:
-            _LOGGER.debug("Requesting fan speed data from %s", url)
-            response = await self._api_request(url)
-            
-            _LOGGER.debug("Raw fan speed data from router: %s", response)
+            response = await self._make_api_request("status.system.info", public_api=False, infoType="fanSpeed")
                 
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
@@ -596,14 +693,14 @@ class PeplinkAPI:
             dict: Dictionary containing device information
                  Format: {
                      "device_info": {
-                         "serial_number": str,
-                         "name": str,
-                         "model": str,
-                         "product_code": str,
-                         "hardware_revision": str,
-                         "firmware_version": str,
-                         "host": str,
-                         "pepvpn_version": str
+                         "serial_number": str,      # Router serial number
+                         "name": str,               # Router hostname
+                         "model": str,              # Router model
+                         "product_code": str,       # Product code
+                         "hardware_revision": str,  # Hardware revision
+                         "firmware_version": str,   # Firmware version
+                         "host": str,               # Host address
+                         "pepvpn_version": str      # PepVPN version
                      }
                  }
         """
@@ -616,18 +713,8 @@ class PeplinkAPI:
             _LOGGER.warning("Error getting device info from combined call, falling back to dedicated call: %s", e)
         
         # Fallback to the original method if combined call fails
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"device_info": {}}
-        
-        session = await self._get_session()
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device&_={int(time.time() * 1000)}")
-        
         try:
-            _LOGGER.debug("Requesting device information from %s", url)
-            response = await self._api_request(url)
-            
-            _LOGGER.debug("Raw device information from router: %s", response)
+            response = await self._make_api_request("status.system.info", public_api=False, infoType="device")
                 
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
@@ -660,27 +747,21 @@ class PeplinkAPI:
         Returns:
             dict: Dictionary containing traffic statistics for each WAN interface
                  Format: {
-                     "stats": [{
-                         "wan_id": str,
-                         "name": str,
-                         "rx_bytes": int,
-                         "tx_bytes": int,
-                         "rx_rate": int,
-                         "tx_rate": int,
-                         "unit": str
-                     }]
+                     "stats": [
+                         {
+                             "wan_id": str,         # WAN interface ID
+                             "name": str,           # WAN interface name
+                             "rx_bytes": int,       # Received bytes
+                             "tx_bytes": int,       # Transmitted bytes
+                             "rx_rate": int,        # Current receive rate
+                             "tx_rate": int,        # Current transmit rate
+                             "unit": str            # Unit (bytes)
+                         }
+                     ]
                  }
         """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"stats": []}
-        
         try:
-            # URL for traffic statistics query
-            endpoint = f"/cgi-bin/MANGA/api.cgi?func=status.traffic&_={int(time.time() * 1000)}"
-            
-            _LOGGER.debug("Requesting traffic statistics from %s", endpoint)
-            response = await self._api_request(endpoint)
+            response = await self._make_api_request("status.traffic", public_api=False)
             
             if "stat" in response and response["stat"] == "ok" and "response" in response:
                 stats_data = response["response"]
@@ -722,34 +803,25 @@ class PeplinkAPI:
         Returns:
             dict: Dictionary containing location information
                 Format: {
-                    "gps": bool,
-                    "type": str,
+                    "gps": bool,                  # Whether GPS is enabled
+                    "type": str,                  # GPS type
                     "location": {
-                        "timeElapsed": int,
-                        "timestamp": int,
-                        "latitude": float,
-                        "longitude": float,
-                        "altitude": float,
-                        "speed": float,
-                        "heading": float,
-                        "accuracy": float,
-                        "pdop": float,
-                        "hdop": float,
-                        "vdop": float
+                        "timeElapsed": int,       # Time elapsed since last update
+                        "timestamp": int,         # UNIX timestamp
+                        "latitude": float,        # Latitude in degrees
+                        "longitude": float,       # Longitude in degrees
+                        "altitude": float,        # Altitude in meters
+                        "speed": float,           # Speed in km/h
+                        "heading": float,         # Heading in degrees
+                        "accuracy": float,        # Accuracy in meters
+                        "pdop": float,            # Position Dilution of Precision
+                        "hdop": float,            # Horizontal Dilution of Precision
+                        "vdop": float             # Vertical Dilution of Precision
                     }
                 }
         """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"gps": False, "type": "Unknown", "location": {}}
-        
         try:
-            # URL for location information query with timestamp to prevent caching
-            timestamp = int(time.time() * 1000)
-            endpoint = f"/cgi-bin/MANGA/api.cgi?func=info.location&_={timestamp}"
-            
-            _LOGGER.debug("Requesting location information from %s", endpoint)
-            response = await self._api_request(endpoint)
+            response = await self._make_api_request("info.location", public_api=False)
             
             if "stat" in response and response["stat"] == "ok" and "response" in response:
                 location_data = response["response"]
