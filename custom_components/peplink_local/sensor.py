@@ -204,6 +204,51 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         icon="mdi:clock-start",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # WiFi specific sensors for WiFi WAN connections
+    PeplinkSensorEntityDescription(
+        key="wifi_signal_strength",
+        translation_key=None,
+        name="WiFi Signal Strength",
+        native_unit_of_measurement="dBm",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: x.get("wifi", {}).get("signal", {}).get("strength"),
+        icon="mdi:wifi-strength-4",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    PeplinkSensorEntityDescription(
+        key="wifi_ssid",
+        translation_key=None,
+        name="WiFi SSID",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("wifi", {}).get("ssid"),
+        icon="mdi:wifi",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    PeplinkSensorEntityDescription(
+        key="wifi_bssid",
+        translation_key=None,
+        name="WiFi BSSID",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        value_fn=lambda x: x.get("wifi", {}).get("bssid"),
+        icon="mdi:wifi-marker",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    PeplinkSensorEntityDescription(
+        key="wifi_channel",
+        translation_key=None,
+        name="WiFi Channel",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: x.get("wifi", {}).get("channel"),
+        icon="mdi:wifi-settings",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 
@@ -390,6 +435,31 @@ async def async_setup_entry(
                                 wan_id=wan_id,
                             )
                         )
+
+                # Add WiFi specific sensors if this is a WiFi WAN connection
+                if wan_connection.get("type") == "wifi":
+                    for description in SENSOR_TYPES:
+                        if description.key.startswith("wifi_"):
+                            # Create a copy of the description for this specific WiFi WAN
+                            sensor_description = PeplinkSensorEntityDescription(
+                                key=description.key,
+                                translation_key=description.translation_key,
+                                name=description.name,
+                                native_unit_of_measurement=description.native_unit_of_measurement,
+                                device_class=description.device_class,
+                                state_class=description.state_class,
+                                icon=description.icon,
+                                value_fn=description.value_fn,
+                            )
+                            entities.append(
+                                PeplinkWANSensor(
+                                    coordinator=coordinator,
+                                    description=sensor_description,
+                                    sensor_data=wan_connection,
+                                    device_info=device_info,
+                                    wan_id=wan_id,
+                                )
+                            )
 
     async_add_entities(entities)
 
@@ -590,6 +660,7 @@ def _translate_wan_type(wan_type: str) -> str:
         "cellular": "Cellular",
         "ipsec": "IPSec VPN",
         "adsl": "ADSL",
+        "wifi": "WiFi",
         "ethernet": "Ethernet"
     }
     
