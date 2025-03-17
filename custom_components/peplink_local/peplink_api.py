@@ -751,113 +751,94 @@ class PeplinkAPI:
                          {
                              "wan_id": str,         # WAN interface ID
                              "name": str,           # WAN interface name
-                             "rx_bytes": int,       # Received bytes
-                             "tx_bytes": int,       # Transmitted bytes
-                             "rx_rate": int,        # Current receive rate
-                             "tx_rate": int,        # Current transmit rate
-                             "unit": str            # Unit (bytes)
+                             "rx_bytes": int,       # Total received bytes
+                             "tx_bytes": int,       # Total transmitted bytes
+                             "rx_rate": int,        # Current receive rate in bits/sec
+                             "tx_rate": int,        # Current transmit rate in bits/sec
+                             "unit": str            # Unit (bits/sec for rates, bytes for totals)
                          }
                      ]
                  }
         """
-        # Get WAN status first to get names and IDs for interfaces
         try:
-            wan_status = await self.get_wan_status()
-            wan_interfaces = {}
+            # Make API request for bandwidth and traffic data
+            response = await self._make_api_request("status.traffic", public_api=False)
             
-            if "connection" in wan_status:
-                for conn in wan_status["connection"]:
-                    if "id" in conn and "name" in conn:
-                        wan_interfaces[conn["id"]] = conn["name"]
-            
-            _LOGGER.debug("Found WAN interfaces: %s", wan_interfaces)
-            
-            # Try different API endpoints for traffic statistics
-            # 1. First try "status.traffic" endpoint
-            try:
-                response = await self._make_api_request("status.traffic", public_api=False)
+            if response.get("stat") == "ok" and "response" in response:
+                data = response["response"]
+                _LOGGER.debug("Received traffic data: %s", data)
                 
-                if response.get("stat") == "ok" and "response" in response:
-                    stats_data = response["response"]
-                    _LOGGER.debug("Received traffic statistics from status.traffic: %s", stats_data)
+                wan_stats = []
+                
+                # Extract traffic data (total transferred) and bandwidth data (current rates)
+                if "traffic" in data and "bandwidth" in data:
+                    traffic_data = data["traffic"]
+                    bandwidth_data = data["bandwidth"]
                     
-                    wan_stats = []
-                    for wan_id, wan_data in stats_data.items():
-                        # Skip non-WAN keys
-                        if not isinstance(wan_id, str) or not wan_id.isdigit():
-                            continue
+                    # Get the ordered list of WAN interfaces if available
+                    wan_order = traffic_data.get("order", [])
+                    
+                    # Process each WAN interface
+                    for wan_id in wan_order:
+                        wan_id_str = str(wan_id)
                         
-                        # Extract relevant statistics
-                        stats_entry = {
-                            "wan_id": wan_id,
-                            "name": wan_data.get("name", wan_interfaces.get(wan_id, f"WAN {wan_id}")),
-                            "rx_bytes": wan_data.get("rx", 0),
-                            "tx_bytes": wan_data.get("tx", 0),
-                            "rx_rate": wan_data.get("rx_rate", 0),
-                            "tx_rate": wan_data.get("tx_rate", 0),
-                            "unit": "bytes"
-                        }
-                        wan_stats.append(stats_entry)
-                    
-                    if wan_stats:
-                        _LOGGER.debug("Processed traffic stats for %d WAN interfaces", len(wan_stats))
-                        return {"stats": wan_stats}
-            except Exception as e:
-                _LOGGER.debug("Error from status.traffic endpoint: %s", e)
-            
-            # 2. Try "status.wan.statistics" endpoint (different naming in some firmware versions)
-            try:
-                response = await self._make_api_request("status.wan.statistics", public_api=False)
-                
-                if response.get("stat") == "ok" and "response" in response:
-                    stats_data = response["response"]
-                    _LOGGER.debug("Received data from status.wan.statistics: %s", stats_data)
-                    
-                    wan_stats = []
-                    # Handle different possible data formats
-                    if isinstance(stats_data, dict):
-                        for wan_id, wan_data in stats_data.items():
-                            if not isinstance(wan_id, str) or not wan_id.isdigit():
-                                continue
-                                
+                        # Get traffic data (total bytes transferred)
+                        if wan_id_str in traffic_data:
+                            wan_traffic = traffic_data[wan_id_str]
+                            traffic_unit = traffic_data.get("unit", "MB")
+                            
+                            # Get bandwidth data (current rates)
+                            wan_bandwidth = bandwidth_data.get(wan_id_str, {})
+                            bandwidth_unit = bandwidth_data.get("unit", "kbps")
+                            
+                            # Extract values
+                            name = wan_traffic.get("name", f"WAN {wan_id_str}")
+                            
+                            # Get total transferred data
+                            overall_traffic = wan_traffic.get("overall", {})
+                            rx_bytes = overall_traffic.get("download", 0)
+                            tx_bytes = overall_traffic.get("upload", 0)
+                            
+                            # Convert to bytes based on unit
+                            if traffic_unit == "MB":
+                                rx_bytes = rx_bytes * 1024 * 1024  # Convert MB to bytes
+                                tx_bytes = tx_bytes * 1024 * 1024  # Convert MB to bytes
+                            elif traffic_unit == "KB":
+                                rx_bytes = rx_bytes * 1024  # Convert KB to bytes
+                                tx_bytes = tx_bytes * 1024  # Convert KB to bytes
+                            
+                            # Get current rates
+                            overall_bandwidth = wan_bandwidth.get("overall", {})
+                            rx_rate = overall_bandwidth.get("download", 0)
+                            tx_rate = overall_bandwidth.get("upload", 0)
+                            
+                            # Convert to bits per second based on unit
+                            if bandwidth_unit == "kbps":
+                                rx_rate = rx_rate * 1000  # Convert kbps to bps
+                                tx_rate = tx_rate * 1000  # Convert kbps to bps
+                            elif bandwidth_unit == "Mbps":
+                                rx_rate = rx_rate * 1000 * 1000  # Convert Mbps to bps
+                            
                             stats_entry = {
-                                "wan_id": wan_id,
-                                "name": wan_interfaces.get(wan_id, f"WAN {wan_id}"),
-                                "rx_bytes": wan_data.get("rx_bytes", wan_data.get("rx", 0)),
-                                "tx_bytes": wan_data.get("tx_bytes", wan_data.get("tx", 0)),
-                                "rx_rate": wan_data.get("rx_rate", 0),
-                                "tx_rate": wan_data.get("tx_rate", 0),
-                                "unit": "bytes"
+                                "wan_id": wan_id_str,
+                                "name": name,
+                                "rx_bytes": rx_bytes,
+                                "tx_bytes": tx_bytes,
+                                "rx_rate": rx_rate,
+                                "tx_rate": tx_rate,
+                                "unit": "bits/sec" if rx_rate or tx_rate else "bytes"
                             }
                             wan_stats.append(stats_entry)
-                    
-                    if wan_stats:
-                        _LOGGER.debug("Processed traffic stats from status.wan.statistics: %d interfaces", len(wan_stats))
-                        return {"stats": wan_stats}
-            except Exception as e:
-                _LOGGER.debug("Error from status.wan.statistics endpoint: %s", e)
-            
-            # 3. Create placeholder entries for Home Assistant
-            if wan_interfaces:
-                _LOGGER.warning("No traffic data available from API endpoints. Creating placeholder data for interfaces.")
-                wan_stats = []
-                for wan_id, wan_name in wan_interfaces.items():
-                    stats_entry = {
-                        "wan_id": wan_id,
-                        "name": wan_name,
-                        "rx_bytes": 0,
-                        "tx_bytes": 0,
-                        "rx_rate": 0,
-                        "tx_rate": 0,
-                        "unit": "bytes"
-                    }
-                    wan_stats.append(stats_entry)
                 
-                _LOGGER.debug("Created placeholder traffic stats for %d WAN interfaces", len(wan_stats))
-                return {"stats": wan_stats}
+                if wan_stats:
+                    _LOGGER.debug("Processed traffic stats for %d WAN interfaces", len(wan_stats))
+                    return {"stats": wan_stats}
+                else:
+                    _LOGGER.warning("No WAN interfaces found in traffic data")
+            else:
+                _LOGGER.warning("Invalid response format from traffic API")
             
-            # If all methods fail, return empty stats
-            _LOGGER.warning("Could not retrieve traffic statistics from any endpoint")
+            # If processing fails, return empty stats
             return {"stats": []}
             
         except Exception as e:
