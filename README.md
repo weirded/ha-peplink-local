@@ -27,6 +27,12 @@ This custom integration allows you to monitor and track your Peplink router from
   - Device Name (diagnostic sensor)
   - Firmware Version (diagnostic sensor)
 - **Device Tracking**: Tracks client devices connected to your Peplink router
+- **Traffic Statistics**:
+  - WAN Download (data rate sensor)
+  - WAN Upload (data rate sensor)
+  - Total Download (data rate sensor)
+  - Total Upload (data rate sensor)
+- **Configurable Polling**: Adjust how frequently the integration polls your router (default: 5 seconds)
 
 ## Requirements
 
@@ -60,6 +66,7 @@ This custom integration allows you to monitor and track your Peplink router from
    - **Username**: Admin username for your Peplink router
    - **Password**: Admin password for your Peplink router
    - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
+   - **Polling Frequency** (optional): How often to poll the router for updates (in seconds, default: 5)
 4. Click "Submit"
 
 ## Contributing
