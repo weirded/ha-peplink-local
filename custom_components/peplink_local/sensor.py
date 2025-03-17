@@ -447,7 +447,7 @@ async def async_setup_entry(
                 
                 # Add all relevant sensors
                 for description in SENSOR_TYPES:
-                    if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message", "wan_uptime"]:
+                    if description.key.startswith("wan_") and description.key not in ["wan_download_rate", "wan_upload_rate", "wan_message", "wan_uptime", "wan_up_since"]:
                         # Create a copy of the description for this specific WAN
                         sensor_description = PeplinkSensorEntityDescription(
                             key=description.key.replace("wan_", ""),
@@ -668,8 +668,8 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
         # Keep reference to initial data
         self._initial_sensor_data = sensor_data
         
-        # Use IP address as the prefix for consistent entity IDs
-        self._attr_unique_id = f"{coordinator.host}_wan{wan_id}_{description.key}_{description.name.lower().replace(' ', '_')}"
+        # Use device name as the prefix for consistent entity IDs
+        self._attr_unique_id = f"{coordinator.device_name or coordinator.host}_wan{wan_id}_{description.key}"
         
         # Use the device name from API if available, otherwise fallback to IP
         device_name = coordinator.device_name or f"Peplink {coordinator.host}"
