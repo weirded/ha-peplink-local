@@ -81,6 +81,27 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         value_fn=lambda x: x.get("threshold"),
         icon="mdi:thermometer-alert",
     ),
+    # System-level bandwidth sensors
+    PeplinkSensorEntityDescription(
+        key="system_download_rate",
+        translation_key=None,
+        name="System Download",
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: round(x.get("rx_rate") / 1_000_000, 2) if x.get("rx_rate") is not None else None,
+        icon="mdi:download-network",
+    ),
+    PeplinkSensorEntityDescription(
+        key="system_upload_rate",
+        translation_key=None,
+        name="System Upload",
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: round(x.get("tx_rate") / 1_000_000, 2) if x.get("tx_rate") is not None else None,
+        icon="mdi:upload-network",
+    ),
     # Device info sensors
     PeplinkSensorEntityDescription(
         key="device_serial_number",
@@ -207,6 +228,30 @@ async def async_setup_entry(
                         coordinator=coordinator,
                         description=description,
                         sensor_data=sensor,
+                    )
+                )
+
+    # Add system-level bandwidth sensors
+    if coordinator.data.get("traffic_stats", {}).get("stats"):
+        raw_traffic_data = coordinator.data["traffic_stats"]["stats"]
+        # Create system download/upload sensors
+        for description in SENSOR_TYPES:
+            if description.key in ["system_download_rate", "system_upload_rate"]:
+                # Prepare system-level traffic data
+                system_traffic_data = {
+                    "rx_rate": 0,
+                    "tx_rate": 0,
+                }
+                # Sum up all WAN interfaces data
+                for wan in raw_traffic_data:
+                    system_traffic_data["rx_rate"] += wan.get("rx_rate", 0)
+                    system_traffic_data["tx_rate"] += wan.get("tx_rate", 0)
+                
+                entities.append(
+                    PeplinkSensor(
+                        coordinator=coordinator,
+                        description=description,
+                        sensor_data=system_traffic_data,
                     )
                 )
 
