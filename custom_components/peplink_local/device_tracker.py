@@ -36,8 +36,12 @@ async def async_setup_entry(
     entities = []
     
     # Add GPS device tracker for the router itself
-    if coordinator.data and "location_info" in coordinator.data and coordinator.data["location_info"].get("gps", False):
-        location_data = coordinator.data["location_info"].get("location", {})
+    location_info = coordinator.data.get("location_info", {})
+    has_gps = location_info.get("gps", False)
+    _LOGGER.debug("GPS capability check for device tracker: %s (has_gps=%s)", location_info, has_gps)
+    
+    if has_gps:
+        location_data = location_info.get("location", {})
         if location_data and "latitude" in location_data and "longitude" in location_data:
             _LOGGER.debug("Creating GPS device tracker for Peplink router")
             entities.append(
@@ -46,6 +50,10 @@ async def async_setup_entry(
                     config_entry_id=entry.entry_id
                 )
             )
+        else:
+            _LOGGER.debug("Router has GPS capability but no valid location data")
+    else:
+        _LOGGER.debug("Router does not have GPS capability - skipping GPS tracker")
     
     # Create a device tracker for each client
     if coordinator.data and "clients" in coordinator.data:

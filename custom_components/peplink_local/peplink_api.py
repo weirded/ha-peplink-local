@@ -755,6 +755,11 @@ class PeplinkAPI:
                 location_data = response["response"]
                 _LOGGER.debug("Received location data: %s", location_data)
                 
+                # Check if GPS is explicitly set to False
+                if location_data.get("gps") is False:
+                    _LOGGER.debug("Router does not have GPS capability")
+                    return {"gps": False, "type": "Unknown", "location": {}}
+                
                 # Process the location data to ensure consistent attribute names
                 if "location" in location_data and location_data.get("gps", False):
                     loc = location_data["location"]
@@ -765,12 +770,8 @@ class PeplinkAPI:
                         # Using 5 meters as the base precision
                         loc["accuracy"] = float(loc["hdop"]) * 5.0
                     
-                    # Ensure heading is present (might be called 'direction' or 'heading' in the API)
-                    if "heading" not in loc and "direction" in loc:
-                        loc["heading"] = loc["direction"]
-                    elif "heading" not in loc and "course" in loc:
-                        loc["heading"] = loc["course"]
-                    elif "heading" not in loc:
+                    # Ensure heading is present if not available
+                    if "heading" not in loc:
                         # Default heading if not available
                         loc["heading"] = None
                 

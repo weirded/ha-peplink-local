@@ -496,8 +496,12 @@ async def async_setup_entry(
                         )
 
     # Add GPS location sensors
-    if coordinator.data.get("location_info", {}).get("gps", False):
-        location_data = coordinator.data["location_info"].get("location", {})
+    location_info = coordinator.data.get("location_info", {})
+    has_gps = location_info.get("gps", False)
+    _LOGGER.debug("GPS capability check: %s (has_gps=%s)", location_info, has_gps)
+    
+    if has_gps:
+        location_data = location_info.get("location", {})
         if location_data:
             for description in SENSOR_TYPES:
                 if description.key in ["heading", "speed", "altitude"]:
@@ -508,6 +512,11 @@ async def async_setup_entry(
                             sensor_data=location_data,
                         )
                     )
+            _LOGGER.debug("Added GPS sensors for heading, speed, and altitude")
+        else:
+            _LOGGER.debug("Router has GPS capability but no valid location data")
+    else:
+        _LOGGER.debug("Router does not have GPS capability - skipping GPS sensors")
 
     # Add all entities
     async_add_entities(entities)
