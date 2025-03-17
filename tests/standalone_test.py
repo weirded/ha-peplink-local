@@ -85,7 +85,16 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         
         _LOGGER.info("Successfully connected to the Peplink router")
         
-        # 1. WAN status
+        # 1. Get combined system information (device info, thermal sensors, fan speeds, system time)
+        _LOGGER.info("Fetching combined system information...")
+        system_info = await api.get_system_info()
+        _LOGGER.info("Combined system information: %s", json.dumps(system_info, indent=2))
+        
+        # Save the complete system info to a file
+        with open(output_dir / "system_info.json", "w") as f:
+            json.dump(system_info, f, indent=2)
+            
+        # 2. WAN status (separate API call)
         _LOGGER.info("Fetching WAN status...")
         wan_status = await api.get_wan_status()
         _LOGGER.info("WAN status: %s", json.dumps(wan_status, indent=2))
@@ -94,7 +103,7 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         with open(output_dir / "wan_status.json", "w") as f:
             json.dump(wan_status, f, indent=2)
         
-        # 2. Client information
+        # 3. Client information (separate API call)
         _LOGGER.info("Fetching client information...")
         clients = await api.get_clients()
         _LOGGER.info("Client information: %s", json.dumps(clients, indent=2))
@@ -103,25 +112,7 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         with open(output_dir / "clients.json", "w") as f:
             json.dump(clients, f, indent=2)
         
-        # 3. Thermal sensors
-        _LOGGER.info("Fetching thermal sensor data...")
-        thermal_sensors = await api.get_thermal_sensors()
-        _LOGGER.info("Thermal sensor data: %s", json.dumps(thermal_sensors, indent=2))
-        
-        # Save to file
-        with open(output_dir / "thermal_sensors.json", "w") as f:
-            json.dump(thermal_sensors, f, indent=2)
-        
-        # 4. Fan speeds
-        _LOGGER.info("Fetching fan speed data...")
-        fan_speeds = await api.get_fan_speeds()
-        _LOGGER.info("Fan speed data: %s", json.dumps(fan_speeds, indent=2))
-        
-        # Save to file
-        with open(output_dir / "fan_speeds.json", "w") as f:
-            json.dump(fan_speeds, f, indent=2)
-        
-        # 5. Traffic statistics
+        # 4. Traffic statistics (separate API call)
         _LOGGER.info("Fetching traffic statistics...")
         traffic_stats = await api.get_traffic_stats()
         _LOGGER.info("Traffic statistics: %s", json.dumps(traffic_stats, indent=2))
@@ -129,15 +120,6 @@ async def test_api(router_ip, username, password, verify_ssl=False):
         # Save to file
         with open(output_dir / "traffic_stats.json", "w") as f:
             json.dump(traffic_stats, f, indent=2)
-        
-        # 6. Device information
-        _LOGGER.info("Fetching device information...")
-        device_info = await api.get_device_info()
-        _LOGGER.info("Device information: %s", json.dumps(device_info, indent=2))
-        
-        # Save to file
-        with open(output_dir / "device_info.json", "w") as f:
-            json.dump(device_info, f, indent=2)
         
         _LOGGER.info("All API tests completed successfully")
         _LOGGER.info("Output files saved to %s", output_dir)

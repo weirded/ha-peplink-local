@@ -161,63 +161,67 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 raise UpdateFailed("Failed to connect to Peplink router")
 
             # Parallelize API calls using asyncio.gather
+            # Use the new combined system info API for device info, thermal sensors, and fan speeds
             results = await asyncio.gather(
                 self.api.get_wan_status(),
                 self.api.get_clients(),
-                self.api.get_thermal_sensors(),
-                self.api.get_fan_speeds(),
+                self.api.get_system_info(),  # Combined system info call
                 self.api.get_traffic_stats(),
-                self.api.get_device_info(),
                 return_exceptions=True,
             )
             
             # Check results for exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    api_calls = ["WAN status", "client information", "thermal sensor data", 
-                                "fan speed data", "traffic statistics", "device information"]
+                    api_calls = ["WAN status", "client information", "system information", "traffic statistics"]
                     raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
                 
             # Unpack results
-            wan_status, clients, thermal_sensors, fan_speeds, traffic_stats, device_info = results
+            wan_status, clients, system_info, traffic_stats = results
+            
+            # Extract components from the combined system_info call
+            thermal_sensors = system_info.get("thermal_sensors", {"sensors": []})
+            fan_speeds = system_info.get("fan_speeds", {"fans": []})
+            device_info = {"device_info": system_info.get("device_info", {})} 
+            system_time = system_info.get("system_time", {})
             
             # Validate results
             if not wan_status:
                 raise UpdateFailed("Failed to get WAN status")
             if not clients:
                 raise UpdateFailed("Failed to get client information")
-            if not thermal_sensors:
-                raise UpdateFailed("Failed to get thermal sensor data")
-            if not fan_speeds:
-                raise UpdateFailed("Failed to get fan speed data")
+            if not system_info:
+                raise UpdateFailed("Failed to get system information")
             if not traffic_stats:
                 raise UpdateFailed("Failed to get traffic statistics")
-            if not device_info:
-                raise UpdateFailed("Failed to get device information")
                 
             # Update model and firmware information if available
             device_info_data = device_info.get("device_info", {})
             if device_info_data:
                 if device_info_data.get("model"):
-                    self.model = device_info_data["model"]
+                    self.model = device_info_data.get("model")
                 if device_info_data.get("firmware_version"):
-                    self.firmware = device_info_data["firmware_version"]
+                    self.firmware = device_info_data.get("firmware_version")
                 if device_info_data.get("name"):
-                    self.device_name = device_info_data["name"]
+                    self.device_name = device_info_data.get("name")
                 if device_info_data.get("serial_number"):
-                    self.serial_number = device_info_data["serial_number"]
+                    self.serial_number = device_info_data.get("serial_number") 
                 if device_info_data.get("product_code"):
-                    self.product_code = device_info_data["product_code"]
+                    self.product_code = device_info_data.get("product_code")
                 if device_info_data.get("hardware_revision"):
-                    self.hardware_revision = device_info_data["hardware_revision"]
-
+                    self.hardware_revision = device_info_data.get("hardware_revision")
+                
+            # Combine all data into a single data structure
             return {
                 "wan_status": wan_status,
                 "clients": clients,
                 "thermal_sensors": thermal_sensors,
                 "fan_speeds": fan_speeds,
                 "traffic_stats": traffic_stats,
-                "device_info": device_info,
+                "device_info": device_info_data,
+                "system_time": system_time
             }
-        except Exception as err:
-            raise UpdateFailed(f"Error communicating with API: {err}")
+                
+        except Exception as e:
+            _LOGGER.exception("Failed to update data: %s", e)
+            raise UpdateFailed(f"Failed to update data: {e}") from e

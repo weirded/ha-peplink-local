@@ -382,6 +382,110 @@ class PeplinkAPI:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
     
+    async def get_system_info(self) -> Dict[str, Any]:
+        """
+        Retrieve combined system information from the router including device info, thermal sensors, and fan speeds.
+        
+        Returns:
+            dict: Dictionary containing combined system information
+                 Format: {
+                     "device_info": {...},
+                     "thermal_sensors": {...},
+                     "fan_speeds": {...},
+                     "system_time": {...}
+                 }
+        """
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {
+                "device_info": {},
+                "thermal_sensors": {"sensors": []},
+                "fan_speeds": {"fans": []},
+                "system_time": {}
+            }
+        
+        session = await self._get_session()
+        # Combined info types in a single request
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device%20systemTime%20thermalSensor%20fanSpeed&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting combined system information from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw combined system information from router: %s", response)
+            
+            result = {
+                "device_info": {},
+                "thermal_sensors": {"sensors": []},
+                "fan_speeds": {"fans": []},
+                "system_time": {}
+            }
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                # Process device information
+                device_info = response["response"].get("device", {})
+                if device_info:
+                    result["device_info"] = {
+                        "serial_number": device_info.get("serialNumber", ""),
+                        "name": device_info.get("name", ""),
+                        "model": device_info.get("model", ""),
+                        "product_code": device_info.get("productCode", ""),
+                        "hardware_revision": device_info.get("hardwareRevision", ""),
+                        "firmware_version": device_info.get("firmwareVersion", ""),
+                        "host": device_info.get("host", ""),
+                        "pepvpn_version": device_info.get("pepvpnVersion", "")
+                    }
+                
+                # Process thermal sensor information
+                sensors = []
+                for sensor in response["response"].get("thermalSensor", []):
+                    sensors.append({
+                        "name": "System",  # Only one sensor per device
+                        "temperature": float(sensor.get("temperature", 0)),
+                        "unit": "C",
+                        "min": float(sensor.get("min", -30)),
+                        "max": float(sensor.get("max", 110)),
+                        "threshold": float(sensor.get("threshold", 30))
+                    })
+                result["thermal_sensors"] = {"sensors": sensors}
+                
+                # Process fan speed information
+                fans = []
+                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                    if fan.get("active", False):
+                        fans.append({
+                            "name": f"Fan {i}",
+                            "speed": int(fan.get("value", 0)),
+                            "unit": "RPM",
+                            "max_speed": int(fan.get("total", 17000)),
+                            "percentage": float(fan.get("percentage", 0))
+                        })
+                result["fan_speeds"] = {"fans": fans}
+                
+                # Process system time information
+                system_time = response["response"].get("systemTime", {})
+                if system_time:
+                    result["system_time"] = {
+                        "time_string": system_time.get("string", ""),
+                        "timestamp": system_time.get("timestamp", 0),
+                        "timezone": system_time.get("timezone", "")
+                    }
+                
+                return result
+            else:
+                _LOGGER.warning("Unexpected combined system information format: %s", response)
+                return result
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching combined system information: %s", e)
+            return {
+                "device_info": {},
+                "thermal_sensors": {"sensors": []},
+                "fan_speeds": {"fans": []},
+                "system_time": {}
+            }
+
     async def get_thermal_sensors(self) -> Dict[str, Any]:
         """
         Retrieve thermal sensor data from the router using undocumented API.
@@ -390,6 +494,15 @@ class PeplinkAPI:
             dict: Dictionary containing thermal sensor information
                  Format: {"sensors": [{"name": str, "temperature": float, "unit": str, "min": float, "max": float, "threshold": float}]}
         """
+        # Try to get data from the combined system info call for efficiency
+        try:
+            system_info = await self.get_system_info()
+            if system_info and system_info.get("thermal_sensors", {}).get("sensors"):
+                return system_info["thermal_sensors"]
+        except Exception as e:
+            _LOGGER.warning("Error getting thermal sensors from combined call, falling back to dedicated call: %s", e)
+        
+        # Fallback to the original method if combined call fails
         if not await self.ensure_connected():
             _LOGGER.error("Failed to connect to Peplink router")
             return {"sensors": []}
@@ -432,6 +545,15 @@ class PeplinkAPI:
             dict: Dictionary containing fan speed information
                  Format: {"fans": [{"name": str, "speed": int, "unit": str, "max_speed": int, "percentage": float}]}
         """
+        # Try to get data from the combined system info call for efficiency
+        try:
+            system_info = await self.get_system_info()
+            if system_info and system_info.get("fan_speeds", {}).get("fans"):
+                return system_info["fan_speeds"]
+        except Exception as e:
+            _LOGGER.warning("Error getting fan speeds from combined call, falling back to dedicated call: %s", e)
+            
+        # Fallback to the original method if combined call fails
         if not await self.ensure_connected():
             _LOGGER.error("Failed to connect to Peplink router")
             return {"fans": []}
@@ -465,6 +587,71 @@ class PeplinkAPI:
         except Exception as e:
             _LOGGER.error("Error fetching fan speed data: %s", e)
             return {"fans": []}
+
+    async def get_device_info(self) -> Dict[str, Any]:
+        """
+        Retrieve device information from the router.
+        
+        Returns:
+            dict: Dictionary containing device information
+                 Format: {
+                     "device_info": {
+                         "serial_number": str,
+                         "name": str,
+                         "model": str,
+                         "product_code": str,
+                         "hardware_revision": str,
+                         "firmware_version": str,
+                         "host": str,
+                         "pepvpn_version": str
+                     }
+                 }
+        """
+        # Try to get data from the combined system info call for efficiency
+        try:
+            system_info = await self.get_system_info()
+            if system_info and system_info.get("device_info"):
+                return {"device_info": system_info["device_info"]}
+        except Exception as e:
+            _LOGGER.warning("Error getting device info from combined call, falling back to dedicated call: %s", e)
+        
+        # Fallback to the original method if combined call fails
+        if not await self.ensure_connected():
+            _LOGGER.error("Failed to connect to Peplink router")
+            return {"device_info": {}}
+        
+        session = await self._get_session()
+        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device&_={int(time.time() * 1000)}")
+        
+        try:
+            _LOGGER.debug("Requesting device information from %s", url)
+            response = await self._api_request(url)
+            
+            _LOGGER.debug("Raw device information from router: %s", response)
+                
+            # Process the response
+            if response.get("stat") == "ok" and "response" in response:
+                device_info = response["response"].get("device", {})
+                
+                if device_info:
+                    info = {
+                        "serial_number": device_info.get("serialNumber", ""),
+                        "name": device_info.get("name", ""),
+                        "model": device_info.get("model", ""),
+                        "product_code": device_info.get("productCode", ""),
+                        "hardware_revision": device_info.get("hardwareRevision", ""),
+                        "firmware_version": device_info.get("firmwareVersion", ""),
+                        "host": device_info.get("host", ""),
+                        "pepvpn_version": device_info.get("pepvpnVersion", "")
+                    }
+                    return {"device_info": info}
+            
+            _LOGGER.warning("Unexpected device information format: %s", response)
+            return {"device_info": {}}
+                    
+        except Exception as e:
+            _LOGGER.error("Error fetching device information: %s", e)
+            return {"device_info": {}}
 
     async def get_traffic_stats(self) -> Dict[str, Any]:
         """
@@ -530,62 +717,6 @@ class PeplinkAPI:
         except Exception as e:
             _LOGGER.error("Error fetching traffic statistics: %s", e)
             return {"stats": []}
-
-    async def get_device_info(self) -> Dict[str, Any]:
-        """
-        Retrieve device information from the router.
-        
-        Returns:
-            dict: Dictionary containing device information
-                 Format: {
-                     "device_info": {
-                         "serial_number": str,
-                         "name": str,
-                         "model": str,
-                         "product_code": str,
-                         "hardware_revision": str,
-                         "firmware_version": str,
-                         "host": str,
-                         "pepvpn_version": str
-                     }
-                 }
-        """
-        if not await self.ensure_connected():
-            _LOGGER.error("Failed to connect to Peplink router")
-            return {"device_info": {}}
-        
-        session = await self._get_session()
-        url = urljoin(self.base_url, f"/cgi-bin/MANGA/api.cgi?func=status.system.info&infoType=device&_={int(time.time() * 1000)}")
-        
-        try:
-            _LOGGER.debug("Requesting device information from %s", url)
-            response = await self._api_request(url)
-            
-            _LOGGER.debug("Raw device information from router: %s", response)
-                
-            # Process the response
-            if response.get("stat") == "ok" and "response" in response:
-                device_info = response["response"].get("device", {})
-                
-                if device_info:
-                    info = {
-                        "serial_number": device_info.get("serialNumber", ""),
-                        "name": device_info.get("name", ""),
-                        "model": device_info.get("model", ""),
-                        "product_code": device_info.get("productCode", ""),
-                        "hardware_revision": device_info.get("hardwareRevision", ""),
-                        "firmware_version": device_info.get("firmwareVersion", ""),
-                        "host": device_info.get("host", ""),
-                        "pepvpn_version": device_info.get("pepvpnVersion", "")
-                    }
-                    return {"device_info": info}
-            
-            _LOGGER.warning("Unexpected device information format: %s", response)
-            return {"device_info": {}}
-                    
-        except Exception as e:
-            _LOGGER.error("Error fetching device information: %s", e)
-            return {"device_info": {}}
 
     async def close(self) -> None:
         """Close the session if we created it."""
