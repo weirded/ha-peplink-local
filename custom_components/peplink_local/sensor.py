@@ -35,6 +35,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 from homeassistant.util import dt as dt_util
+from homeassistant.util.variance import ignore_variance
 from homeassistant.config_entries import ConfigEntry
 
 from . import PeplinkDataUpdateCoordinator
@@ -58,6 +59,11 @@ class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
     value_fn: Callable[[dict], Any] | None = None
     icon: str | None = None
 
+
+uptime_to_stable_datetime = ignore_variance(
+    lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
+    datetime.timedelta(minutes=1),
+)
 
 SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
     # System sensors
@@ -199,7 +205,7 @@ SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
         state_class=None,
         # Calculate the "up since" timestamp by subtracting uptime from current time
         value_fn=lambda x: (
-            dt_util.utcnow() - datetime.timedelta(seconds=x.get("uptime"))
+            uptime_to_stable_datetime(x.get("uptime"))
             if x.get("uptime") is not None
             else None
         ),
