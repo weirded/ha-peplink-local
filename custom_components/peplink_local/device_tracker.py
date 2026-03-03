@@ -1,6 +1,6 @@
 """Device tracker platform for Peplink Local integration."""
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional
 
 from homeassistant.components.device_tracker.const import SourceType
 from homeassistant.components.device_tracker import ScannerEntity, TrackerEntity
@@ -190,37 +190,16 @@ class PeplinkClientTracker(CoordinatorEntity, ScannerEntity):
     ):
         """Initialize the device tracker."""
         super().__init__(coordinator)
-        self._config_entry_id = config_entry_id
         self._client_name = client_name
         self._client_mac = client_mac
-        # Use IP address as the prefix for consistent entity IDs
-        self._attr_unique_id = f"{coordinator.host}_client_{client_mac}"
-        self._attr_name = f"{client_name}"
+        self._attr_name = client_name
         self._is_connected = False
         self._ip_address = None
         self._mac_address = client_mac
         self._attributes = {}
-        self._attr_has_entity_name = True
-        
+
         # Update initial state
         self._update_device_data()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this Peplink router."""
-        # Get the coordinator
-        coordinator = self.coordinator
-        
-        # Use device name from API if available
-        device_name = coordinator.device_name if hasattr(coordinator, "device_name") and coordinator.device_name else f"Peplink {coordinator.host}" if hasattr(coordinator, "host") else "Peplink"
-        
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._config_entry_id)},
-            manufacturer="Peplink",
-            model=coordinator.model if hasattr(coordinator, "model") else "Router",
-            name=device_name,
-            sw_version=coordinator.firmware if hasattr(coordinator, "firmware") else None,
-        )
 
     @property
     def source_type(self) -> str:
