@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -113,10 +114,26 @@ class PeplinkPoESwitch(CoordinatorEntity, SwitchEntity):
         poe = _poe_port(self.coordinator.data, self._port_id)
         return None if poe is None else poe.get("enable") is True
 
+    async def _async_set_poe(self, enable: bool) -> None:
+        """Send the PoE command, then check the device applied it."""
+        # SD switches require port objects ("Mandatory - id in port[0]"); routers accept them too
+        await async_send_command(
+            self.coordinator,
+            "cmd.port.poe.enable" if enable else "cmd.port.poe.disable",
+            {"port": [{"id": int(self._port_id)}]},
+        )
+        poe = _poe_port(self.coordinator.data, self._port_id)
+        if poe is not None and poe.get("enable") is not enable:
+            raise HomeAssistantError(
+                f"Port {self._port_id} PoE is still {'on' if poe.get('enable') else 'off'}: the device "
+                "accepted the command but did not apply it. A switch managed by a router's Switch "
+                "Controller keeps the controller's PoE setting; change it there."
+            )
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable PoE on the port."""
-        await async_send_command(self.coordinator, "cmd.port.poe.enable", {"port": [int(self._port_id)]})
+        await self._async_set_poe(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable PoE on the port."""
-        await async_send_command(self.coordinator, "cmd.port.poe.disable", {"port": [int(self._port_id)]})
+        await self._async_set_poe(False)
