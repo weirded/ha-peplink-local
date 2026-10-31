@@ -58,6 +58,8 @@ class PeplinkAPI:
         self._own_session = False
         self._connected = False
         self._auth_cookie = None
+        # False once the router answers info.location with "unsupported" (code 404)
+        self._location_supported = True
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a session with the appropriate SSL settings."""
@@ -869,9 +871,19 @@ class PeplinkAPI:
                     }
                 }
         """
+        if not self._location_supported:
+            return {"gps": False, "type": "Unknown", "location": {}}
+
         try:
             response = await self._make_api_request("info.location", public_api=False)
-            
+
+            # Devices without GPS support (e.g. FusionHub) answer
+            # {"stat": "fail", "code": 404, "message": "Unsupported request"}
+            if response.get("stat") == "fail" and response.get("code") == 404:
+                _LOGGER.debug("Location is not supported by %s; not polling it again", self.host)
+                self._location_supported = False
+                return {"gps": False, "type": "Unknown", "location": {}}
+
             if "stat" in response and response["stat"] == "ok" and "response" in response:
                 location_data = response["response"]
                 _LOGGER.debug("Received location data: %s", location_data)
