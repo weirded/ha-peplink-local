@@ -1045,15 +1045,20 @@ def _system_stats_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[Sen
 
 
 def _poe_power(data: dict | None, port_id: str) -> float | None:
-    """Return the PoE power draw of a LAN port in watts, or None if it reports none."""
+    """Return a PoE port's draw in watts: 0 while PoE is off, None if the port has no PoE."""
     port = ((data or {}).get("port_status") or {}).get("lan", {}).get(port_id)
     poe = port.get("poe") if isinstance(port, dict) else None
-    power = poe.get("power") if isinstance(poe, dict) else None
-    return power.get("value") if isinstance(power, dict) else None
+    if not isinstance(poe, dict) or "enable" not in poe:
+        return None
+    power = poe.get("power")
+    if isinstance(power, dict) and power.get("value") is not None:
+        return power["value"]
+    # A switch reports power only while PoE is enabled on the port
+    return 0.0 if poe.get("enable") is False else None
 
 
 def _poe_power_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[SensorEntity]:
-    """Create a PoE power sensor per LAN port that reports its draw."""
+    """Create a PoE power sensor per PoE-capable LAN port, whether PoE is on or off."""
     lan = ((coordinator.data or {}).get("port_status") or {}).get("lan", {})
     entities: list[SensorEntity] = []
     for port_id in lan.get("order", []):
