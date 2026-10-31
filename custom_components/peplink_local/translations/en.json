@@ -2,6 +2,13 @@
   "config": {
     "step": {
       "user": {
+        "title": "Add a Peplink device",
+        "menu_options": {
+          "router": "Router, FusionHub or SD Switch (REST API)",
+          "ap_one": "AP One (SNMP)"
+        }
+      },
+      "router": {
         "title": "Connect to Peplink Router",
         "description": "Set up a Peplink router integration to monitor WAN status and track devices.",
         "data": {
@@ -9,6 +16,15 @@
           "username": "Username",
           "password": "Password",
           "verify_ssl": "Verify SSL Certificate",
+          "poll_frequency": "Polling Frequency"
+        }
+      },
+      "ap_one": {
+        "title": "Connect to a Peplink AP One",
+        "description": "AP One firmware has no local API, so it is read over SNMPv2c. Enable SNMP on the access point first.",
+        "data": {
+          "host": "IP Address",
+          "community": "SNMP community",
           "poll_frequency": "Polling Frequency"
         }
       }

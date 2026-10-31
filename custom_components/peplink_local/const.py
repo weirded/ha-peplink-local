@@ -20,3 +20,10 @@ ATTR_WAN_ID = "wan_id"
 ATTR_CLIENT_NAME = "client_name"
 ATTR_CLIENT_MAC = "mac_address"
 ATTR_CLIENT_IP = "ip_address"
+
+# AP One (read over SNMP; it has no local REST API)
+CONF_DEVICE_TYPE = "device_type"
+CONF_COMMUNITY = "community"
+DEVICE_TYPE_AP_ONE = "ap_one"
+DEFAULT_COMMUNITY = "public"
+DEFAULT_SNMP_PORT = 161

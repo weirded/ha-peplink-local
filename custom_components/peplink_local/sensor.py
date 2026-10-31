@@ -41,6 +41,7 @@ from homeassistant.config_entries import ConfigEntry
 
 from . import PeplinkDataUpdateCoordinator
 from .const import DOMAIN
+from .ap_one import ap_one_sensor_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -523,7 +524,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Peplink sensors."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    entry_data = hass.data[DOMAIN][config_entry.entry_id]
+    if entry_data.get("kind") == "ap_one":
+        async_add_entities(ap_one_sensor_entities(entry_data["coordinator"]))
+        return
+    coordinator = entry_data["coordinator"]
 
     entities = []
 

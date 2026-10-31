@@ -89,13 +89,14 @@ This custom integration allows you to monitor and track your Peplink router from
 
 1. Go to **Settings** > **Devices & Services** > **Add Integration**
 2. Search for "Peplink Local"
-3. Enter the following information:
+3. Choose **Router, FusionHub or SD Switch** (or **AP One**, see below)
+4. Enter the following information:
    - **IP Address**: The IP address of your Peplink router
    - **Username**: Admin username for your Peplink router
    - **Password**: Admin password for your Peplink router
    - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
    - **Polling Frequency** (optional): How often to poll the router for updates (in seconds, default: 5)
-4. Click "Submit"
+5. Click "Submit"
 
 ## Peplink SD Switches
 
@@ -107,6 +108,10 @@ An SD Switch is added the same way as a router: enter the switch's own IP addres
 - with an admin login: a PoE switch per PoE port and a Reboot button (disabled by default)
 
 PoE changes are sent to the switch itself (`cmd.port.poe.enable` / `disable`).
+
+## Peplink AP One
+
+AP One firmware has no local REST API, so an AP One is read over SNMPv2c (Pepwave enterprise MIB). Enable SNMP v2c on the access point, then add it with **AP One**: its IP address, the SNMP community (default `public`) and a polling frequency (default 30 s). It creates Wi-Fi Clients (with the client list as an attribute), SSID, Firmware Version, Last Restart and a channel sensor per radio. These are read-only; an AP One has no controls here.
 
 ## GPS Features
 

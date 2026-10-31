@@ -24,11 +24,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     DOMAIN,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_AP_ONE,
     CONF_POLL_FREQUENCY,
     DEFAULT_POLL_FREQUENCY,
     SCAN_INTERVAL,
 )
 from .peplink_api import PeplinkAPI, PeplinkAuthFailed
+from .ap_one import async_setup_ap_one_entry, async_unload_ap_one_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +54,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Peplink Local from a config entry."""
+    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_AP_ONE:
+        return await async_setup_ap_one_entry(hass, entry)
+
     host = entry.data[CONF_HOST]
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
@@ -132,6 +138,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_AP_ONE:
+        return await async_unload_ap_one_entry(hass, entry)
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         data = hass.data[DOMAIN].pop(entry.entry_id)
         api = data["api"]
