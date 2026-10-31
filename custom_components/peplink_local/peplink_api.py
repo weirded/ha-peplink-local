@@ -58,6 +58,8 @@ class PeplinkAPI:
         self._own_session = False
         self._connected = False
         self._auth_cookie = None
+        # Optional status calls this router answered with "unsupported" (code 404)
+        self._unsupported: set[str] = set()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a session with the appropriate SSL settings."""
@@ -904,7 +906,63 @@ class PeplinkAPI:
         except Exception as e:
             _LOGGER.error("Error retrieving location information: %s", e)
             return {"gps": False, "type": "Unknown", "location": {}}
-            
+
+    async def _get_optional_status(self, func: str) -> Dict[str, Any]:
+        """
+        Retrieve an /api/ status call that not every router supports.
+
+        Routers without the feature answer with stat "fail" and code 404
+        ("Unsupported request"); such calls are remembered and not made again.
+
+        Returns:
+            dict: The "response" object, or an empty dict when unavailable
+        """
+        if func in self._unsupported:
+            return {}
+        try:
+            response = await self._make_api_request(func, public_api=True)
+        except Exception as e:
+            _LOGGER.debug("Could not retrieve %s: %s", func, e)
+            return {}
+
+        if response.get("stat") == "ok" and isinstance(response.get("response"), dict):
+            return response["response"]
+        if response.get("code") == 404:
+            _LOGGER.debug("%s is not supported by %s; not polling it again", func, self.host)
+            self._unsupported.add(func)
+        else:
+            _LOGGER.debug("Unexpected %s response: %s", func, response)
+        return {}
+
+    async def get_pepvpn_status(self) -> Dict[str, Any]:
+        """
+        Retrieve SpeedFusion (PepVPN) profile and peer status.
+
+        Returns:
+            dict: {"profile": {"order": [...], "<id>": {"name", "status", ...}},
+                   "peer": [{"name", "status", "profileId", ...}]}
+        """
+        return await self._get_optional_status("status.pepvpn")
+
+    async def get_ap_status(self) -> Dict[str, Any]:
+        """
+        Retrieve the built-in Wi-Fi access point status.
+
+        Returns:
+            dict: {"status": "on" | "off", "ssid": [{"ssid", "security", ...}]}
+        """
+        return await self._get_optional_status("status.ap")
+
+    async def get_port_status(self) -> Dict[str, Any]:
+        """
+        Retrieve LAN and WAN Ethernet port status.
+
+        Returns:
+            dict: {"lan": {"order": [...], "<n>": {"linkUp", "enable", "speed", ...}},
+                   "wan": {...}}
+        """
+        return await self._get_optional_status("status.port")
+
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
