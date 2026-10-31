@@ -58,6 +58,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         device_name = None
         if device_info and "device_info" in device_info:
             device_name = device_info["device_info"].get("name")
+        if not device_name:
+            # SD switches only answer the public /api/ form
+            system_info = await client.get_system_info(public_api=True)
+            device_name = system_info.get("device_info", {}).get("name")
             
     except PeplinkAuthFailed as err:
         raise PeplinkAuthFailed from err

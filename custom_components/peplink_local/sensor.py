@@ -25,6 +25,7 @@ from homeassistant.const import (
     UnitOfTime,
     UnitOfLength,
     UnitOfSpeed,
+    UnitOfPower,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -50,6 +51,7 @@ class PeplinkSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[dict], Any] | None = None
     icon: str | None = None
+    attributes_fn: Callable[[dict], dict[str, Any]] | None = None
 
 
 @dataclass
@@ -63,6 +65,230 @@ class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
 uptime_to_stable_datetime = ignore_variance(
     lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
     datetime.timedelta(minutes=1),
+)
+
+device_uptime_to_stable_datetime = ignore_variance(
+    lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
+    datetime.timedelta(minutes=1),
+)
+
+starlink_uptime_to_stable_datetime = ignore_variance(
+    lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
+    datetime.timedelta(minutes=1),
+)
+
+
+def _starlink(connection: dict) -> dict:
+    """Return the Starlink dish data the router reports for a Starlink WAN."""
+    return connection.get("starlink") or {}
+
+
+def _starlink_rate(connection: dict, direction: str) -> float | None:
+    """Return the dish's current download or upload rate in Mbit/s."""
+    bandwidth = _starlink(connection).get("bandwidth") or {}
+    value = bandwidth.get(direction)
+    if value is None:
+        return None
+    scale = {"bps": 1, "kbps": 1_000, "Mbps": 1_000_000}.get(bandwidth.get("unit", "bps"), 1)
+    return round(value * scale / 1_000_000, 2)
+
+
+def _percent(value: float | None, digits: int) -> float | None:
+    """Convert a 0-1 fraction to a percentage."""
+    return round(value * 100, digits) if value is not None else None
+
+
+def _cellular(connection: dict) -> dict:
+    """Return the cellular data the router reports for a cellular WAN."""
+    return connection.get("cellular") or {}
+
+
+def _primary_band(connection: dict) -> dict:
+    """Return the first band of the first radio access technology (the serving cell)."""
+    rats = _cellular(connection).get("rat") or []
+    bands = (rats[0].get("band") or []) if rats else []
+    return bands[0] if bands else {}
+
+
+# Per-WAN sensors for a WAN the router reports as Starlink (it polls the dish itself)
+STARLINK_SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
+    PeplinkSensorEntityDescription(
+        key="starlink_ping",
+        name="Starlink Ping",
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: (
+            round(_starlink(x)["latency"]["popPing"], 1)
+            if _starlink(x).get("latency", {}).get("popPing") is not None
+            else None
+        ),
+        icon="mdi:speedometer",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_download",
+        name="Starlink Download",
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _starlink_rate(x, "download"),
+        icon="mdi:download-network",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_upload",
+        name="Starlink Upload",
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        device_class=SensorDeviceClass.DATA_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _starlink_rate(x, "upload"),
+        icon="mdi:upload-network",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_obstruction",
+        name="Starlink Obstruction",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _percent(_starlink(x).get("obstructionStat", {}).get("fractionObstructed"), 1),
+        icon="mdi:satellite-variant",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_time_obstructed",
+        name="Starlink Time Obstructed",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _percent(_starlink(x).get("obstructionStat", {}).get("timeObstructed"), 2),
+        icon="mdi:timer-sand",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_last_restart",
+        name="Starlink Last Restart",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: (
+            starlink_uptime_to_stable_datetime(_starlink(x)["deviceState"]["uptime"])
+            if _starlink(x).get("deviceState", {}).get("uptime") is not None
+            else None
+        ),
+        icon="mdi:clock-start",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_boot_count",
+        name="Starlink Boot Count",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _starlink(x).get("deviceInfo", {}).get("bootCount"),
+        icon="mdi:restart",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_software_version",
+        name="Starlink Software Version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _starlink(x).get("deviceInfo", {}).get("softwareVersion"),
+        attributes_fn=lambda x: {
+            "dish_id": _starlink(x).get("deviceInfo", {}).get("id"),
+            "hardware_version": _starlink(x).get("deviceInfo", {}).get("hardwareVersion"),
+            "mobility_class": _starlink(x).get("deviceInfo", {}).get("mobilityClass"),
+        },
+        icon="mdi:package-variant-closed",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_azimuth",
+        name="Starlink Azimuth",
+        native_unit_of_measurement="°",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _starlink(x).get("alignmentStat", {}).get("boresightAzimuthDeg"),
+        attributes_fn=lambda x: {
+            "desired": _starlink(x).get("alignmentStat", {}).get("desiredBoresightAzimuthDeg"),
+        },
+        icon="mdi:compass-outline",
+    ),
+    PeplinkSensorEntityDescription(
+        key="starlink_elevation",
+        name="Starlink Elevation",
+        native_unit_of_measurement="°",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _starlink(x).get("alignmentStat", {}).get("boresightElevationDeg"),
+        attributes_fn=lambda x: {
+            "desired": _starlink(x).get("alignmentStat", {}).get("desiredBoresightElevationDeg"),
+        },
+        icon="mdi:angle-acute",
+    ),
+)
+
+# Per-WAN sensors for a cellular WAN; signal values are those of the serving cell
+CELLULAR_SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
+    PeplinkSensorEntityDescription(
+        key="cellular_signal_level",
+        name="Signal Level",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _cellular(x).get("signalLevel"),
+        icon="mdi:signal-cellular-3",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_rsrp",
+        name="RSRP",
+        native_unit_of_measurement="dBm",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _primary_band(x).get("signal", {}).get("rsrp"),
+        icon="mdi:signal",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_rsrq",
+        name="RSRQ",
+        native_unit_of_measurement="dB",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _primary_band(x).get("signal", {}).get("rsrq"),
+        icon="mdi:signal",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_sinr",
+        name="SINR",
+        native_unit_of_measurement="dB",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _primary_band(x).get("signal", {}).get("sinr"),
+        icon="mdi:signal",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_rssi",
+        name="RSSI",
+        native_unit_of_measurement="dBm",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda x: _primary_band(x).get("signal", {}).get("rssi"),
+        icon="mdi:signal",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_band",
+        name="Band",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _primary_band(x).get("name"),
+        attributes_fn=lambda x: {
+            "channel": _primary_band(x).get("channel"),
+            "pci": _primary_band(x).get("pci"),
+            "channel_width": _primary_band(x).get("channelWidth"),
+        },
+        icon="mdi:radio-tower",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_technology",
+        name="Network Technology",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _cellular(x).get("dataTechnology") or _cellular(x).get("mobileType") or None,
+        icon="mdi:network-strength-4",
+    ),
+    PeplinkSensorEntityDescription(
+        key="cellular_carrier",
+        name="Carrier",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda x: _cellular(x).get("carrier", {}).get("name") or None,
+        icon="mdi:sim",
+    ),
 )
 
 SENSOR_TYPES: tuple[PeplinkSensorEntityDescription, ...] = (
@@ -307,6 +533,8 @@ async def async_setup_entry(
         sensor = thermal_sensors["sensors"][0]  # Only one sensor
         for description in SENSOR_TYPES:
             if description.key in ["system_temperature", "system_temperature_threshold"]:
+                if description.key == "system_temperature_threshold" and sensor.get("threshold") is None:
+                    continue
                 entities.append(
                     PeplinkSensor(
                         coordinator=coordinator,
@@ -500,6 +728,29 @@ async def async_setup_entry(
                                 wan_id=wan_id,
                             )
                         )
+
+                # Starlink dish sensors for a WAN the router reports as Starlink
+                extra_descriptions: tuple[PeplinkSensorEntityDescription, ...] = ()
+                if "starlink" in wan_connection or wan_connection.get("virtualType") == "starlink":
+                    extra_descriptions += STARLINK_SENSOR_TYPES
+                # Signal sensors for a cellular WAN whose module reports signal data
+                cellular = _cellular(wan_connection)
+                if "signalLevel" in cellular or "rat" in cellular:
+                    extra_descriptions += CELLULAR_SENSOR_TYPES
+                for description in extra_descriptions:
+                    entities.append(
+                        PeplinkWANSensor(
+                            coordinator=coordinator,
+                            description=description,
+                            sensor_data=wan_connection,
+                            device_info=device_info,
+                            wan_id=wan_id,
+                        )
+                    )
+
+    # CPU load and last restart, and PoE power per port (SD switches report these)
+    entities.extend(_system_stats_sensors(coordinator))
+    entities.extend(_poe_power_sensors(coordinator))
 
     # Add GPS location sensors
     location_info = coordinator.data.get("location_info", {})
@@ -738,7 +989,119 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return entity specific state attributes."""
+        if self.entity_description.attributes_fn is not None:
+            if self.coordinator.data:
+                connections = self.coordinator.data.get("wan_status", {}).get("connection", [])
+                for connection in connections:
+                    if str(connection.get("id", "")) == self._wan_id:
+                        return self.entity_description.attributes_fn(connection)
+            return self.entity_description.attributes_fn(self._initial_sensor_data)
         return self._extra_attrs
+
+
+def _system_stats_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[SensorEntity]:
+    """Create CPU load and last restart sensors when the device reports them."""
+    stats = (coordinator.data or {}).get("system_stats") or {}
+    entities: list[SensorEntity] = []
+    if stats.get("cpu_load") is not None:
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key="cpu_load",
+                    name="CPU Load",
+                    native_unit_of_measurement=PERCENTAGE,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    value_fn=lambda d: (d.get("system_stats") or {}).get("cpu_load"),
+                    icon="mdi:cpu-64-bit",
+                ),
+            )
+        )
+    if stats.get("uptime") is not None:
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key="last_restart",
+                    name="Last Restart",
+                    device_class=SensorDeviceClass.TIMESTAMP,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    value_fn=lambda d: (
+                        device_uptime_to_stable_datetime(d["system_stats"]["uptime"])
+                        if (d.get("system_stats") or {}).get("uptime") is not None
+                        else None
+                    ),
+                    icon="mdi:clock-start",
+                ),
+            )
+        )
+    return entities
+
+
+def _poe_power(data: dict | None, port_id: str) -> float | None:
+    """Return a PoE port's draw in watts: 0 while PoE is off, None if the port has no PoE."""
+    port = ((data or {}).get("port_status") or {}).get("lan", {}).get(port_id)
+    poe = port.get("poe") if isinstance(port, dict) else None
+    if not isinstance(poe, dict) or "enable" not in poe:
+        return None
+    power = poe.get("power")
+    if isinstance(power, dict) and power.get("value") is not None:
+        return power["value"]
+    # A switch reports power only while PoE is enabled on the port
+    return 0.0 if poe.get("enable") is False else None
+
+
+def _poe_power_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[SensorEntity]:
+    """Create a PoE power sensor per PoE-capable LAN port, whether PoE is on or off."""
+    lan = ((coordinator.data or {}).get("port_status") or {}).get("lan", {})
+    entities: list[SensorEntity] = []
+    for port_id in lan.get("order", []):
+        port_id = str(port_id)
+        if _poe_power(coordinator.data, port_id) is None:
+            continue
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key=f"lan_port_{port_id}_poe_power",
+                    name=f"LAN Port {port_id} PoE Power",
+                    native_unit_of_measurement=UnitOfPower.WATT,
+                    device_class=SensorDeviceClass.POWER,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    value_fn=lambda d, p=port_id: _poe_power(d, p),
+                    icon="mdi:flash",
+                ),
+            )
+        )
+    return entities
+
+
+class PeplinkDataSensor(CoordinatorEntity, SensorEntity):
+    """A device-level sensor whose value is computed from the whole coordinator data."""
+
+    entity_description: PeplinkSensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PeplinkDataUpdateCoordinator,
+        description: PeplinkSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)})
+        if description.icon:
+            self._attr_icon = description.icon
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        if self.entity_description.value_fn is None:
+            return None
+        return self.entity_description.value_fn(self.coordinator.data or {})
 
 
 def _translate_wan_type(wan_type: str) -> str:

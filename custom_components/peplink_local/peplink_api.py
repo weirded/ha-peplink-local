@@ -29,6 +29,10 @@ class PeplinkSSLError(Exception):
     """SSL Certificate validation error."""
 
 
+class PeplinkCommandError(Exception):
+    """The router refused a command or configuration change."""
+
+
 def _create_insecure_ssl_context():
     """Create an insecure SSL context (non-blocking function)."""
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -58,6 +62,8 @@ class PeplinkAPI:
         self._own_session = False
         self._connected = False
         self._auth_cookie = None
+        # Optional status calls this router answered with "unsupported" (code 404)
+        self._unsupported: set[str] = set()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create a session with the appropriate SSL settings."""
@@ -194,6 +200,21 @@ class PeplinkAPI:
             return await self.connect()
         return True
     
+    def _request_headers(self, method: str) -> Dict[str, str]:
+        """
+        Return the session cookie, plus the header a router requires on writes.
+
+        A router answers a POST made with a login session with code 401 unless it
+        carries X-Requested-With, as the web admin's own requests do. GETs work
+        without it, and SD switches accept POSTs either way.
+        """
+        headers = {}
+        if self._auth_cookie:
+            headers["Cookie"] = f"bauth={self._auth_cookie}"
+        if method.upper() != "GET":
+            headers["X-Requested-With"] = "XMLHttpRequest"
+        return headers
+
     async def _api_request(self, endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict:
         """Make an API request to the Peplink router."""
         if not self._connected:
@@ -205,11 +226,7 @@ class PeplinkAPI:
         session = await self._get_session()
         url = urljoin(self.base_url, endpoint)
         
-        headers = {}
-        # Manually add cookie to request if available
-        if self._auth_cookie:
-            headers["Cookie"] = f"bauth={self._auth_cookie}"
-            _LOGGER.debug("Adding auth cookie to request: %s", headers["Cookie"])
+        headers = self._request_headers(method)
         
         try:
             async with session.request(method, url, json=data, headers=headers) as response:
@@ -219,9 +236,7 @@ class PeplinkAPI:
                     # Try to reconnect with force flag and retry the request
                     if await self.ensure_connected(force_reconnect=True):
                         _LOGGER.debug("Successfully reconnected, retrying request")
-                        headers = {}
-                        if self._auth_cookie:
-                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        headers = self._request_headers(method)
                         async with session.request(method, url, json=data, headers=headers) as retry_response:
                             if retry_response.status == 401:
                                 _LOGGER.error("Still unauthorized after reconnect attempt")
@@ -245,9 +260,7 @@ class PeplinkAPI:
                     # Try to reconnect with force flag and retry
                     if await self.ensure_connected(force_reconnect=True):
                         _LOGGER.debug("Successfully reconnected after API 401, retrying request")
-                        headers = {}
-                        if self._auth_cookie:
-                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        headers = self._request_headers(method)
                         async with session.request(method, url, json=data, headers=headers) as retry_response:
                             retry_response.raise_for_status()
                             retry_data = await retry_response.json()
@@ -459,7 +472,7 @@ class PeplinkAPI:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
 
-    async def get_system_info(self) -> Dict[str, Any]:
+    async def get_system_info(self, public_api: bool = False) -> Dict[str, Any]:
         """
         Retrieve combined system information from the router including device info, thermal sensors, and fan speeds.
         
@@ -507,8 +520,9 @@ class PeplinkAPI:
                  }
         """
         try:
-            # Combined info types in a single request
-            response = await self._make_api_request("status.system.info", public_api=False, infoType="device%20systemTime%20thermalSensor%20fanSpeed")
+            # Combined info types in a single request. SD switches only answer the
+            # public /api/ form, which returns every info type (infoType is ignored).
+            response = await self._make_api_request("status.system.info", public_api=public_api, infoType="device%20systemTime%20thermalSensor%20fanSpeed")
                 
             result = {
                 "device_info": {},
@@ -535,7 +549,7 @@ class PeplinkAPI:
                 
                 # Process thermal sensor information
                 sensors = []
-                for sensor in response["response"].get("thermalSensor", []):
+                for sensor in response["response"].get("thermalSensor") or []:
                     sensors.append({
                         "name": "System",  # Only one sensor per device
                         "temperature": float(sensor.get("temperature", 0)),
@@ -548,7 +562,7 @@ class PeplinkAPI:
                 
                 # Process fan speed information
                 fans = []
-                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                for i, fan in enumerate(response["response"].get("fanSpeed") or [], 1):
                     if fan.get("active", False):
                         fans.append({
                             "name": f"Fan {i}",
@@ -567,7 +581,16 @@ class PeplinkAPI:
                         "timestamp": system_time.get("timestamp", 0),
                         "timezone": system_time.get("timezone", "")
                     }
-                
+
+                # CPU load and uptime (returned by the public /api/ form only)
+                cpu_load = response["response"].get("cpuLoad") or {}
+                uptime = response["response"].get("uptime") or {}
+                if cpu_load or uptime:
+                    result["system_stats"] = {
+                        "cpu_load": cpu_load.get("percentage"),
+                        "uptime": uptime.get("second"),
+                    }
+
                 return result
             else:
                 _LOGGER.warning("Unexpected combined system information format: %s", response)
@@ -616,7 +639,7 @@ class PeplinkAPI:
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
                 sensors = []
-                for sensor in response["response"].get("thermalSensor", []):
+                for sensor in response["response"].get("thermalSensor") or []:
                     sensors.append({
                         "name": "System",  # Only one sensor per device
                         "temperature": float(sensor.get("temperature", 0)),
@@ -667,7 +690,7 @@ class PeplinkAPI:
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
                 fans = []
-                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                for i, fan in enumerate(response["response"].get("fanSpeed") or [], 1):
                     if fan.get("active", False):
                         fans.append({
                             "name": f"Fan {i}",
@@ -904,7 +927,118 @@ class PeplinkAPI:
         except Exception as e:
             _LOGGER.error("Error retrieving location information: %s", e)
             return {"gps": False, "type": "Unknown", "location": {}}
-            
+
+    async def _get_optional_status(self, func: str) -> Dict[str, Any]:
+        """
+        Retrieve an /api/ status call that not every router supports.
+
+        Routers without the feature answer with stat "fail" and code 404
+        ("Unsupported request"); such calls are remembered and not made again.
+
+        Returns:
+            dict: The "response" object, or an empty dict when unavailable
+        """
+        if func in self._unsupported:
+            return {}
+        try:
+            response = await self._make_api_request(func, public_api=True)
+        except Exception as e:
+            _LOGGER.debug("Could not retrieve %s: %s", func, e)
+            return {}
+
+        if response.get("stat") == "ok" and isinstance(response.get("response"), dict):
+            return response["response"]
+        if response.get("code") == 404:
+            _LOGGER.debug("%s is not supported by %s; not polling it again", func, self.host)
+            self._unsupported.add(func)
+        else:
+            _LOGGER.debug("Unexpected %s response: %s", func, response)
+        return {}
+
+    async def get_device_kind(self) -> str:
+        """
+        Return "switch" for a Peplink SD Switch and "router" for anything else.
+
+        Routers and FusionHub get the same treatment; an SD Switch has no WANs,
+        clients or GPS and is polled for system info and ports only.
+        """
+        try:
+            response = await self._make_api_request("status.system.info", public_api=True)
+        except Exception as e:
+            _LOGGER.debug("Could not read the device model from %s: %s", self.host, e)
+            return "router"
+        model = ((response.get("response") or {}).get("device") or {}).get("model") or ""
+        return "switch" if "switch" in model.lower() else "router"
+
+    async def check_admin(self) -> bool:
+        """
+        Return True if the login has admin rights.
+
+        GET /api/auth.client answers "ok" for an admin login and 401 for a
+        read-only one on routers, FusionHub and SD switches alike. The request
+        is made directly so a read-only login does not log an error or trigger
+        a reconnect.
+        """
+        if not await self.ensure_connected():
+            return False
+        session = await self._get_session()
+        headers = {"Cookie": f"bauth={self._auth_cookie}"} if self._auth_cookie else {}
+        try:
+            async with session.get(urljoin(self.base_url, "/api/auth.client"), headers=headers) as response:
+                if response.status != 200:
+                    return False
+                data = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+            _LOGGER.debug("Admin check on %s failed: %s", self.host, e)
+            return False
+        return isinstance(data, dict) and data.get("stat") == "ok"
+
+    async def send_command(self, func: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        POST a command or configuration change to /api/<func>.
+
+        Returns:
+            dict: The "response" object, empty if the router sent none
+
+        Raises:
+            PeplinkCommandError: The router answered with stat "fail"
+        """
+        response = await self._make_api_request(func, public_api=True, method="POST", data=data or {})
+        if response.get("stat") != "ok":
+            raise PeplinkCommandError(
+                f"{func} failed: {response.get('message') or 'error'} (code {response.get('code')})"
+            )
+        return response.get("response") or {}
+
+    async def get_pepvpn_status(self) -> Dict[str, Any]:
+        """
+        Retrieve SpeedFusion (PepVPN) profile and peer status.
+
+        Returns:
+            dict: {"profile": {"order": [...], "<id>": {"name", "status", ...}},
+                   "peer": [{"name", "status", "profileId", ...}]}
+        """
+        return await self._get_optional_status("status.pepvpn")
+
+    async def get_ap_status(self) -> Dict[str, Any]:
+        """
+        Retrieve the built-in Wi-Fi access point status.
+
+        Returns:
+            dict: {"status": "on" | "off", "ssid": [{"ssid", "security", ...}]}
+        """
+        return await self._get_optional_status("status.ap")
+
+    async def get_port_status(self) -> Dict[str, Any]:
+        """
+        Retrieve LAN and WAN Ethernet port status.
+
+        Returns:
+            dict: {"lan": {"order": [...], "<n>": {"linkUp", "enable", "speed", ...}},
+                   "wan": {...}}
+        """
+        return await self._get_optional_status("status.port")
+
     async def close(self) -> None:
         """Close the session if we created it."""
         if self._own_session and self._session is not None:
