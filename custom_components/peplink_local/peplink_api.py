@@ -200,6 +200,21 @@ class PeplinkAPI:
             return await self.connect()
         return True
     
+    def _request_headers(self, method: str) -> Dict[str, str]:
+        """
+        Return the session cookie, plus the header a router requires on writes.
+
+        A router answers a POST made with a login session with code 401 unless it
+        carries X-Requested-With, as the web admin's own requests do. GETs work
+        without it, and SD switches accept POSTs either way.
+        """
+        headers = {}
+        if self._auth_cookie:
+            headers["Cookie"] = f"bauth={self._auth_cookie}"
+        if method.upper() != "GET":
+            headers["X-Requested-With"] = "XMLHttpRequest"
+        return headers
+
     async def _api_request(self, endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict:
         """Make an API request to the Peplink router."""
         if not self._connected:
@@ -211,11 +226,7 @@ class PeplinkAPI:
         session = await self._get_session()
         url = urljoin(self.base_url, endpoint)
         
-        headers = {}
-        # Manually add cookie to request if available
-        if self._auth_cookie:
-            headers["Cookie"] = f"bauth={self._auth_cookie}"
-            _LOGGER.debug("Adding auth cookie to request: %s", headers["Cookie"])
+        headers = self._request_headers(method)
         
         try:
             async with session.request(method, url, json=data, headers=headers) as response:
@@ -225,9 +236,7 @@ class PeplinkAPI:
                     # Try to reconnect with force flag and retry the request
                     if await self.ensure_connected(force_reconnect=True):
                         _LOGGER.debug("Successfully reconnected, retrying request")
-                        headers = {}
-                        if self._auth_cookie:
-                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        headers = self._request_headers(method)
                         async with session.request(method, url, json=data, headers=headers) as retry_response:
                             if retry_response.status == 401:
                                 _LOGGER.error("Still unauthorized after reconnect attempt")
@@ -251,9 +260,7 @@ class PeplinkAPI:
                     # Try to reconnect with force flag and retry
                     if await self.ensure_connected(force_reconnect=True):
                         _LOGGER.debug("Successfully reconnected after API 401, retrying request")
-                        headers = {}
-                        if self._auth_cookie:
-                            headers["Cookie"] = f"bauth={self._auth_cookie}"
+                        headers = self._request_headers(method)
                         async with session.request(method, url, json=data, headers=headers) as retry_response:
                             retry_response.raise_for_status()
                             retry_data = await retry_response.json()
