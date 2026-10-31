@@ -19,6 +19,19 @@ This custom integration allows you to monitor and track your Peplink router from
   - WAN Name (text sensor)
   - WAN IP Address (text sensor)
   - WAN Up Since (timestamp sensor)
+- **Starlink Sensors** (for a WAN the router reports as Starlink; the router polls the dish, so no extra call is made):
+  - Starlink Ping, Download and Upload
+  - Starlink Obstruction and Time Obstructed (percent)
+  - Starlink Last Restart, Boot Count and Software Version (with dish ID, hardware version and mobility class as attributes)
+  - Starlink Azimuth and Elevation (with the desired values as attributes)
+- **Cellular Signal Sensors** (for each cellular WAN whose module reports signal, including one in standby):
+  - Signal Level (bars), RSRP, RSRQ, SINR and RSSI of the serving cell
+  - Band (with channel, PCI and channel width as attributes), Network Technology and Carrier
+- **SpeedFusion Status**: one connectivity sensor per SpeedFusion (PepVPN) profile, on while it is connected, with its peers and their status as attributes
+- **Wi-Fi Access Point**: on while the router's built-in access point is on, with its SSIDs as an attribute
+- **Port Link Sensors**: one connectivity sensor per LAN and WAN Ethernet port, with the port name, enabled state and link speed as attributes
+
+  The SpeedFusion, access point and port sensors use one extra read-only call each. Routers without the feature (a FusionHub has no access point or Ethernet ports) get no such entities, and an unsupported call is not repeated.
 - **Router Sensors**:
   - Fan Speed Sensors (speed sensors, dynamically created for each fan)
   - System Temperature (temperature sensor)

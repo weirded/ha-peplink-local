@@ -176,17 +176,21 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_system_info(),  # Combined system info call
                 self.api.get_traffic_stats(),
                 self.api.get_location(),      # Get location data from GPS
+                # Optional status calls: an empty dict when the router lacks the feature
+                self.api.get_pepvpn_status(),
+                self.api.get_ap_status(),
+                self.api.get_port_status(),
                 return_exceptions=True,
             )
-            
+
             # Check results for exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    api_calls = ["WAN status", "client information", "system information", "traffic statistics", "location information"]
+                    api_calls = ["WAN status", "client information", "system information", "traffic statistics", "location information", "SpeedFusion status", "access point status", "port status"]
                     raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
-                
+
             # Unpack results
-            wan_status, clients, system_info, traffic_stats, location_info = results
+            wan_status, clients, system_info, traffic_stats, location_info, pepvpn_status, ap_status, port_status = results
             
             # Extract components from the combined system_info call
             thermal_sensors = system_info.get("thermal_sensors", {"sensors": []})
@@ -229,7 +233,10 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "traffic_stats": traffic_stats,
                 "device_info": device_info_data,
                 "system_time": system_time,
-                "location_info": location_info
+                "location_info": location_info,
+                "pepvpn_status": pepvpn_status,
+                "ap_status": ap_status,
+                "port_status": port_status,
             }
                 
         except Exception as e:

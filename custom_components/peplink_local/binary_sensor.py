@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -28,6 +28,7 @@ class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
 
     value_fn: Callable[[dict], Any] | None = None
     icon: str | None = None
+    attributes_fn: Callable[[dict], dict[str, Any]] | None = None
 
 
 BINARY_SENSOR_TYPES: tuple[PeplinkBinarySensorEntityDescription, ...] = (
@@ -86,8 +87,109 @@ async def async_setup_entry(
                     wan_id=wan_id,
                 )
             )
-    
+
+    entities.extend(_router_status_entities(coordinator))
+
     async_add_entities(entities)
+
+
+def _pepvpn_profile(data: dict, profile_id: str) -> dict | None:
+    """Return a SpeedFusion profile with its peers attached, or None if it is gone."""
+    status = data.get("pepvpn_status") or {}
+    profile = (status.get("profile") or {}).get(profile_id)
+    if not isinstance(profile, dict):
+        return None
+    peers = [peer for peer in status.get("peer") or [] if str(peer.get("profileId")) == profile_id]
+    return {**profile, "peers": peers}
+
+
+def _port(data: dict, side: str, port_id: str) -> dict | None:
+    """Return one LAN or WAN Ethernet port, or None if it is gone."""
+    port = ((data.get("port_status") or {}).get(side) or {}).get(port_id)
+    return port if isinstance(port, dict) else None
+
+
+def _router_status_entities(coordinator: PeplinkDataUpdateCoordinator) -> list[BinarySensorEntity]:
+    """Create SpeedFusion, access point and port binary sensors the router has data for."""
+    data = coordinator.data or {}
+    entities: list[BinarySensorEntity] = []
+
+    # One sensor per SpeedFusion (PepVPN) profile
+    profiles = (data.get("pepvpn_status") or {}).get("profile") or {}
+    for profile_id in profiles.get("order", []):
+        profile_id = str(profile_id)
+        profile = profiles.get(profile_id)
+        if not isinstance(profile, dict):
+            continue
+        entities.append(
+            PeplinkRouterBinarySensor(
+                coordinator=coordinator,
+                description=PeplinkBinarySensorEntityDescription(
+                    key=f"pepvpn_{profile_id}",
+                    name=f"SpeedFusion {profile.get('name') or profile_id}",
+                    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+                    value_fn=lambda x: x.get("status") == "CONNECTED",
+                    attributes_fn=lambda x: {
+                        "status": x.get("status"),
+                        "type": x.get("type"),
+                        "peer_count": x.get("peerCount"),
+                        "peers": [
+                            {"name": peer.get("name"), "status": peer.get("status")}
+                            for peer in x.get("peers", [])
+                        ],
+                    },
+                    icon="mdi:vpn",
+                ),
+                item_fn=lambda d, pid=profile_id: _pepvpn_profile(d, pid),
+            )
+        )
+
+    # Built-in Wi-Fi access point
+    if "status" in (data.get("ap_status") or {}):
+        entities.append(
+            PeplinkRouterBinarySensor(
+                coordinator=coordinator,
+                description=PeplinkBinarySensorEntityDescription(
+                    key="access_point",
+                    name="Wi-Fi Access Point",
+                    value_fn=lambda x: x.get("status") == "on",
+                    attributes_fn=lambda x: {
+                        "ssids": [ssid.get("ssid") for ssid in x.get("ssid") or []],
+                    },
+                    icon="mdi:access-point",
+                ),
+                item_fn=lambda d: d.get("ap_status") or None,
+            )
+        )
+
+    # Link state of each LAN and WAN Ethernet port
+    for side, label in (("lan", "LAN"), ("wan", "WAN")):
+        ports = (data.get("port_status") or {}).get(side) or {}
+        for port_id in ports.get("order", []):
+            port_id = str(port_id)
+            if not isinstance(ports.get(port_id), dict):
+                continue
+            entities.append(
+                PeplinkRouterBinarySensor(
+                    coordinator=coordinator,
+                    description=PeplinkBinarySensorEntityDescription(
+                        key=f"{side}_port_{port_id}_link",
+                        name=f"{label} Port {port_id} Link",
+                        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+                        entity_category=EntityCategory.DIAGNOSTIC,
+                        value_fn=lambda x: x.get("linkUp") is True,
+                        attributes_fn=lambda x: {
+                            "port_name": x.get("name"),
+                            "enabled": x.get("enable"),
+                            "speed": x.get("speed"),
+                        },
+                        icon="mdi:ethernet",
+                    ),
+                    item_fn=lambda d, s=side, p=port_id: _port(d, s, p),
+                )
+            )
+
+    return entities
 
 
 class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
@@ -139,3 +241,53 @@ class PeplinkWANBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 
         # Fall back to initial sensor data
         return self.entity_description.value_fn(self._initial_sensor_data)
+
+
+class PeplinkRouterBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """A router-level binary sensor read from one item of the coordinator data."""
+
+    entity_description: PeplinkBinarySensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PeplinkDataUpdateCoordinator,
+        description: PeplinkBinarySensorEntityDescription,
+        item_fn: Callable[[dict], dict | None],
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+
+        self.entity_description = description
+        self._item_fn = item_fn
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
+        )
+        if description.icon:
+            self._attr_icon = description.icon
+
+    def _item(self) -> dict | None:
+        """Return this sensor's item from the latest coordinator data."""
+        return self._item_fn(self.coordinator.data or {})
+
+    @property
+    def available(self) -> bool:
+        """Return True while the router still reports this item."""
+        return super().available and self._item() is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the binary sensor is on."""
+        item = self._item()
+        if item is None or self.entity_description.value_fn is None:
+            return None
+        return self.entity_description.value_fn(item)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return entity specific state attributes."""
+        item = self._item()
+        if item is None or self.entity_description.attributes_fn is None:
+            return None
+        return self.entity_description.attributes_fn(item)
