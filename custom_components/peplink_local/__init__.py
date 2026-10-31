@@ -32,7 +32,14 @@ from .peplink_api import PeplinkAPI, PeplinkAuthFailed
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.DEVICE_TRACKER, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.DEVICE_TRACKER,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.BUTTON,
+    Platform.SELECT,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -74,6 +81,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             api=api,
             config_entry=entry,
         )
+
+        # Controls (switches, buttons, selects) are only created for an admin login
+        coordinator.is_admin = await api.check_admin()
+        _LOGGER.debug("Peplink %s login is %s", host, "admin" if coordinator.is_admin else "read-only")
 
         await coordinator.async_config_entry_first_refresh()
 
@@ -160,6 +171,7 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.serial_number = None  # Can be updated later if the API provides serial number
         self.product_code = None  # Can be updated later if the API provides product code
         self.hardware_revision = None  # Can be updated later if the API provides hardware revision
+        self.is_admin = False  # Set at setup: True if the login may send commands
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via API."""

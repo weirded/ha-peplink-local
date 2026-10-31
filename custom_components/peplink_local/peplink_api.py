@@ -29,6 +29,10 @@ class PeplinkSSLError(Exception):
     """SSL Certificate validation error."""
 
 
+class PeplinkCommandError(Exception):
+    """The router refused a command or configuration change."""
+
+
 def _create_insecure_ssl_context():
     """Create an insecure SSL context (non-blocking function)."""
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -933,6 +937,46 @@ class PeplinkAPI:
         else:
             _LOGGER.debug("Unexpected %s response: %s", func, response)
         return {}
+
+    async def check_admin(self) -> bool:
+        """
+        Return True if the login has admin rights.
+
+        GET /api/auth.client answers "ok" for an admin login and 401 for a
+        read-only one on routers, FusionHub and SD switches alike. The request
+        is made directly so a read-only login does not log an error or trigger
+        a reconnect.
+        """
+        if not await self.ensure_connected():
+            return False
+        session = await self._get_session()
+        headers = {"Cookie": f"bauth={self._auth_cookie}"} if self._auth_cookie else {}
+        try:
+            async with session.get(urljoin(self.base_url, "/api/auth.client"), headers=headers) as response:
+                if response.status != 200:
+                    return False
+                data = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+            _LOGGER.debug("Admin check on %s failed: %s", self.host, e)
+            return False
+        return isinstance(data, dict) and data.get("stat") == "ok"
+
+    async def send_command(self, func: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        POST a command or configuration change to /api/<func>.
+
+        Returns:
+            dict: The "response" object, empty if the router sent none
+
+        Raises:
+            PeplinkCommandError: The router answered with stat "fail"
+        """
+        response = await self._make_api_request(func, public_api=True, method="POST", data=data or {})
+        if response.get("stat") != "ok":
+            raise PeplinkCommandError(
+                f"{func} failed: {response.get('message') or 'error'} (code {response.get('code')})"
+            )
+        return response.get("response") or {}
 
     async def get_pepvpn_status(self) -> Dict[str, Any]:
         """
