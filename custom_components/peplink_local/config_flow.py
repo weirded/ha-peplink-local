@@ -12,7 +12,16 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, CONF_POLL_FREQUENCY, DEFAULT_POLL_FREQUENCY
+from .ap_one import DEFAULT_AP_ONE_POLL_FREQUENCY, async_probe_ap_one
+from .const import (
+    DOMAIN,
+    CONF_COMMUNITY,
+    CONF_DEVICE_TYPE,
+    CONF_POLL_FREQUENCY,
+    DEFAULT_COMMUNITY,
+    DEFAULT_POLL_FREQUENCY,
+    DEVICE_TYPE_AP_ONE,
+)
 from .peplink_api import PeplinkAPI, PeplinkAuthFailed, PeplinkSSLError
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +67,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         device_name = None
         if device_info and "device_info" in device_info:
             device_name = device_info["device_info"].get("name")
+        if not device_name:
+            # SD switches only answer the public /api/ form
+            system_info = await client.get_system_info(public_api=True)
+            device_name = system_info.get("device_info", {}).get("name")
             
     except PeplinkAuthFailed as err:
         raise PeplinkAuthFailed from err
@@ -84,7 +97,40 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step."""
+        """Ask which kind of Peplink device to add."""
+        return self.async_show_menu(step_id="user", menu_options=["router", "ap_one"])
+
+    async def async_step_ap_one(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add an AP One, which is read over SNMPv2c."""
+        errors: dict[str, str] = {}
+        defaults = user_input or {}
+        schema = vol.Schema({
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_COMMUNITY, default=defaults.get(CONF_COMMUNITY, DEFAULT_COMMUNITY)): str,
+            vol.Optional(
+                CONF_POLL_FREQUENCY,
+                default=defaults.get(CONF_POLL_FREQUENCY, DEFAULT_AP_ONE_POLL_FREQUENCY),
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
+        })
+        if user_input is not None:
+            try:
+                data = await async_probe_ap_one(user_input[CONF_HOST], user_input[CONF_COMMUNITY])
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.debug("AP One %s did not answer SNMP", user_input[CONF_HOST], exc_info=True)
+                errors["base"] = "cannot_connect"
+            else:
+                title = data["device"].get("hostname") or f"AP One ({user_input[CONF_HOST]})"
+                return self.async_create_entry(
+                    title=title, data={**user_input, CONF_DEVICE_TYPE: DEVICE_TYPE_AP_ONE}
+                )
+        return self.async_show_form(step_id="ap_one", data_schema=schema, errors=errors)
+
+    async def async_step_router(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add a router, FusionHub or SD Switch, which is read over its REST API."""
         errors: dict[str, str] = {}
 
         # Use user_input as defaults if provided, otherwise empty dict
@@ -115,7 +161,7 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title=info["title"], data=user_input)
 
         return self.async_show_form(
-            step_id="user", data_schema=schema, errors=errors
+            step_id="router", data_schema=schema, errors=errors
         )
 
     @staticmethod

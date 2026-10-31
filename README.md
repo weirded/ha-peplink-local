@@ -19,6 +19,28 @@ This custom integration allows you to monitor and track your Peplink router from
   - WAN Name (text sensor)
   - WAN IP Address (text sensor)
   - WAN Up Since (timestamp sensor)
+- **Starlink Sensors** (for a WAN the router reports as Starlink; the router polls the dish, so no extra call is made):
+  - Starlink Ping, Download and Upload
+  - Starlink Obstruction and Time Obstructed (percent)
+  - Starlink Last Restart, Boot Count and Software Version (with dish ID, hardware version and mobility class as attributes)
+  - Starlink Azimuth and Elevation (with the desired values as attributes)
+- **Cellular Signal Sensors** (for each cellular WAN whose module reports signal, including one in standby):
+  - Signal Level (bars), RSRP, RSRQ, SINR and RSSI of the serving cell
+  - Band (with channel, PCI and channel width as attributes), Network Technology and Carrier
+- **SpeedFusion Status**: one connectivity sensor per SpeedFusion (PepVPN) profile, on while it is connected, with its peers and their status as attributes
+- **Wi-Fi Access Point**: on while the router's built-in access point is on, with its SSIDs as an attribute
+- **Port Link Sensors**: one connectivity sensor per LAN and WAN Ethernet port, with the port name, enabled state and link speed as attributes
+
+  The SpeedFusion, access point and port sensors use one extra read-only call each. Routers without the feature (a FusionHub has no access point or Ethernet ports) get no such entities, and an unsupported call is not repeated.
+- **Controls** (only with an admin login; a read-only login gets none of these):
+  - Wi-Fi Access Point switch (turns the built-in access point on or off)
+  - PoE switch per LAN port that supports PoE
+  - Priority select per enabled WAN (1–4, applied immediately)
+  - Starlink Reboot, Stow and Unstow buttons on a Starlink WAN (the router needs an active Care plan)
+  - Reset Cellular Module button per cellular WAN
+  - Reboot button for the router (disabled by default)
+
+  Setup checks once whether the login is an admin one (`GET /api/auth.client`). To move an existing entry to an admin login, use **Reconfigure** on the entry.
 - **Router Sensors**:
   - Fan Speed Sensors (speed sensors, dynamically created for each fan)
   - System Temperature (temperature sensor)
@@ -67,13 +89,29 @@ This custom integration allows you to monitor and track your Peplink router from
 
 1. Go to **Settings** > **Devices & Services** > **Add Integration**
 2. Search for "Peplink Local"
-3. Enter the following information:
+3. Choose **Router, FusionHub or SD Switch** (or **AP One**, see below)
+4. Enter the following information:
    - **IP Address**: The IP address of your Peplink router
    - **Username**: Admin username for your Peplink router
    - **Password**: Admin password for your Peplink router
    - **Verify SSL** (optional): Disable this if your router uses a self-signed certificate
    - **Polling Frequency** (optional): How often to poll the router for updates (in seconds, default: 5)
-4. Click "Submit"
+5. Click "Submit"
+
+## Peplink SD Switches
+
+An SD Switch is added the same way as a router: enter the switch's own IP address and a login it accepts (a switch managed by a router's Switch Controller takes that router's logins). The integration recognises the switch by its model and polls only its system information and ports. It creates:
+
+- System Temperature, CPU Load and Last Restart
+- a link sensor per port, with the port name, enabled state and speed as attributes
+- a PoE Power sensor (W) per PoE port
+- with an admin login: a PoE switch per PoE port and a Reboot button (disabled by default)
+
+PoE changes are sent to the switch itself (`cmd.port.poe.enable` / `disable`).
+
+## Peplink AP One
+
+AP One firmware has no local REST API, so an AP One is read over SNMPv2c (Pepwave enterprise MIB). Enable SNMP v2c on the access point, then add it with **AP One**: its IP address, the SNMP community (default `public`) and a polling frequency (default 30 s). It creates Wi-Fi Clients (with the client list as an attribute), SSID, Firmware Version, Last Restart and a channel sensor per radio. These are read-only; an AP One has no controls here.
 
 ## GPS Features
 

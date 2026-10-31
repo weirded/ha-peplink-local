@@ -24,15 +24,25 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     DOMAIN,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_AP_ONE,
     CONF_POLL_FREQUENCY,
     DEFAULT_POLL_FREQUENCY,
     SCAN_INTERVAL,
 )
 from .peplink_api import PeplinkAPI, PeplinkAuthFailed
+from .ap_one import async_setup_ap_one_entry, async_unload_ap_one_entry
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.DEVICE_TRACKER, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.DEVICE_TRACKER,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.BUTTON,
+    Platform.SELECT,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -44,6 +54,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Peplink Local from a config entry."""
+    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_AP_ONE:
+        return await async_setup_ap_one_entry(hass, entry)
+
     host = entry.data[CONF_HOST]
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
@@ -74,6 +87,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             api=api,
             config_entry=entry,
         )
+
+        # An SD Switch is polled differently from a router or FusionHub
+        coordinator.device_kind = await api.get_device_kind()
+
+        # Controls (switches, buttons, selects) are only created for an admin login
+        coordinator.is_admin = await api.check_admin()
+        _LOGGER.debug("Peplink %s login is %s", host, "admin" if coordinator.is_admin else "read-only")
 
         await coordinator.async_config_entry_first_refresh()
 
@@ -118,6 +138,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_AP_ONE:
+        return await async_unload_ap_one_entry(hass, entry)
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         data = hass.data[DOMAIN].pop(entry.entry_id)
         api = data["api"]
@@ -160,6 +182,54 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.serial_number = None  # Can be updated later if the API provides serial number
         self.product_code = None  # Can be updated later if the API provides product code
         self.hardware_revision = None  # Can be updated later if the API provides hardware revision
+        self.is_admin = False  # Set at setup: True if the login may send commands
+        self.device_kind = "router"  # Set at setup: "switch" for an SD Switch
+
+    def _update_device_fields(self, device_info_data: dict[str, Any]) -> None:
+        """Update model, firmware, name and serial from the device info, when present."""
+        if device_info_data.get("model"):
+            self.model = device_info_data.get("model")
+        if device_info_data.get("firmware_version"):
+            self.firmware = device_info_data.get("firmware_version")
+        if device_info_data.get("name"):
+            self.device_name = device_info_data.get("name")
+        if device_info_data.get("serial_number"):
+            self.serial_number = device_info_data.get("serial_number")
+        if device_info_data.get("product_code"):
+            self.product_code = device_info_data.get("product_code")
+        if device_info_data.get("hardware_revision"):
+            self.hardware_revision = device_info_data.get("hardware_revision")
+
+    async def _async_update_switch_data(self) -> dict[str, Any]:
+        """Update an SD Switch: system info and ports only (it has no WANs, clients or GPS)."""
+        system_info, port_status = await asyncio.gather(
+            self.api.get_system_info(public_api=True),
+            self.api.get_port_status(),
+        )
+        if not system_info.get("device_info"):
+            raise UpdateFailed("Failed to get system information")
+
+        device_info_data = system_info["device_info"]
+        self._update_device_fields(device_info_data)
+
+        # The switch's thermal "threshold" is not an over-temperature limit; leave it out
+        sensors = [dict(sensor, threshold=None) for sensor in system_info.get("thermal_sensors", {}).get("sensors", [])]
+
+        return {
+            "device_kind": "switch",
+            "wan_status": {"connection": []},
+            "clients": {"client": []},
+            "thermal_sensors": {"sensors": sensors},
+            "fan_speeds": system_info.get("fan_speeds", {"fans": []}),
+            "traffic_stats": {"stats": []},
+            "device_info": device_info_data,
+            "system_time": system_info.get("system_time", {}),
+            "system_stats": system_info.get("system_stats", {}),
+            "location_info": {"gps": False, "type": "Unknown", "location": {}},
+            "pepvpn_status": {},
+            "ap_status": {},
+            "port_status": port_status,
+        }
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via API."""
@@ -167,6 +237,9 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Ensure we're connected
             if not await self.api.ensure_connected():
                 raise UpdateFailed("Failed to connect to Peplink router")
+
+            if self.device_kind == "switch":
+                return await self._async_update_switch_data()
 
             # Parallelize API calls using asyncio.gather
             # Use the new combined system info API for device info, thermal sensors, and fan speeds
@@ -176,17 +249,21 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_system_info(),  # Combined system info call
                 self.api.get_traffic_stats(),
                 self.api.get_location(),      # Get location data from GPS
+                # Optional status calls: an empty dict when the router lacks the feature
+                self.api.get_pepvpn_status(),
+                self.api.get_ap_status(),
+                self.api.get_port_status(),
                 return_exceptions=True,
             )
-            
+
             # Check results for exceptions
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    api_calls = ["WAN status", "client information", "system information", "traffic statistics", "location information"]
+                    api_calls = ["WAN status", "client information", "system information", "traffic statistics", "location information", "SpeedFusion status", "access point status", "port status"]
                     raise UpdateFailed(f"Failed to get {api_calls[i]}: {result}")
-                
+
             # Unpack results
-            wan_status, clients, system_info, traffic_stats, location_info = results
+            wan_status, clients, system_info, traffic_stats, location_info, pepvpn_status, ap_status, port_status = results
             
             # Extract components from the combined system_info call
             thermal_sensors = system_info.get("thermal_sensors", {"sensors": []})
@@ -206,20 +283,8 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 
             # Update model and firmware information if available
             device_info_data = device_info.get("device_info", {})
-            if device_info_data:
-                if device_info_data.get("model"):
-                    self.model = device_info_data.get("model")
-                if device_info_data.get("firmware_version"):
-                    self.firmware = device_info_data.get("firmware_version")
-                if device_info_data.get("name"):
-                    self.device_name = device_info_data.get("name")
-                if device_info_data.get("serial_number"):
-                    self.serial_number = device_info_data.get("serial_number") 
-                if device_info_data.get("product_code"):
-                    self.product_code = device_info_data.get("product_code")
-                if device_info_data.get("hardware_revision"):
-                    self.hardware_revision = device_info_data.get("hardware_revision")
-                
+            self._update_device_fields(device_info_data)
+
             # Combine all data into a single data structure
             return {
                 "wan_status": wan_status,
@@ -229,7 +294,10 @@ class PeplinkDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "traffic_stats": traffic_stats,
                 "device_info": device_info_data,
                 "system_time": system_time,
-                "location_info": location_info
+                "location_info": location_info,
+                "pepvpn_status": pepvpn_status,
+                "ap_status": ap_status,
+                "port_status": port_status,
             }
                 
         except Exception as e:

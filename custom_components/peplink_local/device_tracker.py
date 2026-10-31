@@ -27,6 +27,10 @@ async def async_setup_entry(
 ):
     """Set up Peplink device tracker based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    # An SD Switch has no client list or GPS
+    if getattr(coordinator, "device_kind", "router") == "switch":
+        return
     
     _LOGGER.debug("Setting up Peplink device trackers for entry: %s", entry.entry_id)
     
