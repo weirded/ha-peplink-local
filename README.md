@@ -97,6 +97,17 @@ This custom integration allows you to monitor and track your Peplink router from
    - **Polling Frequency** (optional): How often to poll the router for updates (in seconds, default: 5)
 4. Click "Submit"
 
+## Peplink SD Switches
+
+An SD Switch is added the same way as a router: enter the switch's own IP address and a login it accepts (a switch managed by a router's Switch Controller takes that router's logins). The integration recognises the switch by its model and polls only its system information and ports. It creates:
+
+- System Temperature, CPU Load and Last Restart
+- a link sensor per port, with the port name, enabled state and speed as attributes
+- a PoE Power sensor (W) per PoE port
+- with an admin login: a PoE switch per PoE port and a Reboot button (disabled by default)
+
+PoE changes are sent to the switch itself (`cmd.port.poe.enable` / `disable`).
+
 ## GPS Features
 
 The GPS tracking features are automatically enabled when your Peplink router has GPS capabilities. This is particularly useful for mobile routers like MAX Transit or MAX BR1 series with cellular connectivity.

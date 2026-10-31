@@ -465,7 +465,7 @@ class PeplinkAPI:
             _LOGGER.error("Unexpected response format for client information")
             return {"client": []}
 
-    async def get_system_info(self) -> Dict[str, Any]:
+    async def get_system_info(self, public_api: bool = False) -> Dict[str, Any]:
         """
         Retrieve combined system information from the router including device info, thermal sensors, and fan speeds.
         
@@ -513,8 +513,9 @@ class PeplinkAPI:
                  }
         """
         try:
-            # Combined info types in a single request
-            response = await self._make_api_request("status.system.info", public_api=False, infoType="device%20systemTime%20thermalSensor%20fanSpeed")
+            # Combined info types in a single request. SD switches only answer the
+            # public /api/ form, which returns every info type (infoType is ignored).
+            response = await self._make_api_request("status.system.info", public_api=public_api, infoType="device%20systemTime%20thermalSensor%20fanSpeed")
                 
             result = {
                 "device_info": {},
@@ -541,7 +542,7 @@ class PeplinkAPI:
                 
                 # Process thermal sensor information
                 sensors = []
-                for sensor in response["response"].get("thermalSensor", []):
+                for sensor in response["response"].get("thermalSensor") or []:
                     sensors.append({
                         "name": "System",  # Only one sensor per device
                         "temperature": float(sensor.get("temperature", 0)),
@@ -554,7 +555,7 @@ class PeplinkAPI:
                 
                 # Process fan speed information
                 fans = []
-                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                for i, fan in enumerate(response["response"].get("fanSpeed") or [], 1):
                     if fan.get("active", False):
                         fans.append({
                             "name": f"Fan {i}",
@@ -573,7 +574,16 @@ class PeplinkAPI:
                         "timestamp": system_time.get("timestamp", 0),
                         "timezone": system_time.get("timezone", "")
                     }
-                
+
+                # CPU load and uptime (returned by the public /api/ form only)
+                cpu_load = response["response"].get("cpuLoad") or {}
+                uptime = response["response"].get("uptime") or {}
+                if cpu_load or uptime:
+                    result["system_stats"] = {
+                        "cpu_load": cpu_load.get("percentage"),
+                        "uptime": uptime.get("second"),
+                    }
+
                 return result
             else:
                 _LOGGER.warning("Unexpected combined system information format: %s", response)
@@ -622,7 +632,7 @@ class PeplinkAPI:
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
                 sensors = []
-                for sensor in response["response"].get("thermalSensor", []):
+                for sensor in response["response"].get("thermalSensor") or []:
                     sensors.append({
                         "name": "System",  # Only one sensor per device
                         "temperature": float(sensor.get("temperature", 0)),
@@ -673,7 +683,7 @@ class PeplinkAPI:
             # Process the response
             if response.get("stat") == "ok" and "response" in response:
                 fans = []
-                for i, fan in enumerate(response["response"].get("fanSpeed", []), 1):
+                for i, fan in enumerate(response["response"].get("fanSpeed") or [], 1):
                     if fan.get("active", False):
                         fans.append({
                             "name": f"Fan {i}",
@@ -937,6 +947,21 @@ class PeplinkAPI:
         else:
             _LOGGER.debug("Unexpected %s response: %s", func, response)
         return {}
+
+    async def get_device_kind(self) -> str:
+        """
+        Return "switch" for a Peplink SD Switch and "router" for anything else.
+
+        Routers and FusionHub get the same treatment; an SD Switch has no WANs,
+        clients or GPS and is polled for system info and ports only.
+        """
+        try:
+            response = await self._make_api_request("status.system.info", public_api=True)
+        except Exception as e:
+            _LOGGER.debug("Could not read the device model from %s: %s", self.host, e)
+            return "router"
+        model = ((response.get("response") or {}).get("device") or {}).get("model") or ""
+        return "switch" if "switch" in model.lower() else "router"
 
     async def check_admin(self) -> bool:
         """

@@ -25,6 +25,7 @@ from homeassistant.const import (
     UnitOfTime,
     UnitOfLength,
     UnitOfSpeed,
+    UnitOfPower,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -62,6 +63,11 @@ class PeplinkBinarySensorEntityDescription(BinarySensorEntityDescription):
 
 
 uptime_to_stable_datetime = ignore_variance(
+    lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
+    datetime.timedelta(minutes=1),
+)
+
+device_uptime_to_stable_datetime = ignore_variance(
     lambda value: dt_util.utcnow() - datetime.timedelta(seconds=value),
     datetime.timedelta(minutes=1),
 )
@@ -527,6 +533,8 @@ async def async_setup_entry(
         sensor = thermal_sensors["sensors"][0]  # Only one sensor
         for description in SENSOR_TYPES:
             if description.key in ["system_temperature", "system_temperature_threshold"]:
+                if description.key == "system_temperature_threshold" and sensor.get("threshold") is None:
+                    continue
                 entities.append(
                     PeplinkSensor(
                         coordinator=coordinator,
@@ -739,6 +747,10 @@ async def async_setup_entry(
                             wan_id=wan_id,
                         )
                     )
+
+    # CPU load and last restart, and PoE power per port (SD switches report these)
+    entities.extend(_system_stats_sensors(coordinator))
+    entities.extend(_poe_power_sensors(coordinator))
 
     # Add GPS location sensors
     location_info = coordinator.data.get("location_info", {})
@@ -985,6 +997,106 @@ class PeplinkWANSensor(CoordinatorEntity, SensorEntity):
                         return self.entity_description.attributes_fn(connection)
             return self.entity_description.attributes_fn(self._initial_sensor_data)
         return self._extra_attrs
+
+
+def _system_stats_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[SensorEntity]:
+    """Create CPU load and last restart sensors when the device reports them."""
+    stats = (coordinator.data or {}).get("system_stats") or {}
+    entities: list[SensorEntity] = []
+    if stats.get("cpu_load") is not None:
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key="cpu_load",
+                    name="CPU Load",
+                    native_unit_of_measurement=PERCENTAGE,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    value_fn=lambda d: (d.get("system_stats") or {}).get("cpu_load"),
+                    icon="mdi:cpu-64-bit",
+                ),
+            )
+        )
+    if stats.get("uptime") is not None:
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key="last_restart",
+                    name="Last Restart",
+                    device_class=SensorDeviceClass.TIMESTAMP,
+                    entity_category=EntityCategory.DIAGNOSTIC,
+                    value_fn=lambda d: (
+                        device_uptime_to_stable_datetime(d["system_stats"]["uptime"])
+                        if (d.get("system_stats") or {}).get("uptime") is not None
+                        else None
+                    ),
+                    icon="mdi:clock-start",
+                ),
+            )
+        )
+    return entities
+
+
+def _poe_power(data: dict | None, port_id: str) -> float | None:
+    """Return the PoE power draw of a LAN port in watts, or None if it reports none."""
+    port = ((data or {}).get("port_status") or {}).get("lan", {}).get(port_id)
+    poe = port.get("poe") if isinstance(port, dict) else None
+    power = poe.get("power") if isinstance(poe, dict) else None
+    return power.get("value") if isinstance(power, dict) else None
+
+
+def _poe_power_sensors(coordinator: PeplinkDataUpdateCoordinator) -> list[SensorEntity]:
+    """Create a PoE power sensor per LAN port that reports its draw."""
+    lan = ((coordinator.data or {}).get("port_status") or {}).get("lan", {})
+    entities: list[SensorEntity] = []
+    for port_id in lan.get("order", []):
+        port_id = str(port_id)
+        if _poe_power(coordinator.data, port_id) is None:
+            continue
+        entities.append(
+            PeplinkDataSensor(
+                coordinator,
+                PeplinkSensorEntityDescription(
+                    key=f"lan_port_{port_id}_poe_power",
+                    name=f"LAN Port {port_id} PoE Power",
+                    native_unit_of_measurement=UnitOfPower.WATT,
+                    device_class=SensorDeviceClass.POWER,
+                    state_class=SensorStateClass.MEASUREMENT,
+                    value_fn=lambda d, p=port_id: _poe_power(d, p),
+                    icon="mdi:flash",
+                ),
+            )
+        )
+    return entities
+
+
+class PeplinkDataSensor(CoordinatorEntity, SensorEntity):
+    """A device-level sensor whose value is computed from the whole coordinator data."""
+
+    entity_description: PeplinkSensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: PeplinkDataUpdateCoordinator,
+        description: PeplinkSensorEntityDescription,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, coordinator.config_entry.entry_id)})
+        if description.icon:
+            self._attr_icon = description.icon
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        if self.entity_description.value_fn is None:
+            return None
+        return self.entity_description.value_fn(self.coordinator.data or {})
 
 
 def _translate_wan_type(wan_type: str) -> str:
