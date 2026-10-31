@@ -32,6 +32,15 @@ This custom integration allows you to monitor and track your Peplink router from
 - **Port Link Sensors**: one connectivity sensor per LAN and WAN Ethernet port, with the port name, enabled state and link speed as attributes
 
   The SpeedFusion, access point and port sensors use one extra read-only call each. Routers without the feature (a FusionHub has no access point or Ethernet ports) get no such entities, and an unsupported call is not repeated.
+- **Controls** (only with an admin login; a read-only login gets none of these):
+  - Wi-Fi Access Point switch (turns the built-in access point on or off)
+  - PoE switch per LAN port that supports PoE
+  - Priority select per enabled WAN (1–4, applied immediately)
+  - Starlink Reboot, Stow and Unstow buttons on a Starlink WAN (the router needs an active Care plan)
+  - Reset Cellular Module button per cellular WAN
+  - Reboot button for the router (disabled by default)
+
+  Setup checks once whether the login is an admin one (`GET /api/auth.client`). To move an existing entry to an admin login, use **Reconfigure** on the entry.
 - **Router Sensors**:
   - Fan Speed Sensors (speed sensors, dynamically created for each fan)
   - System Temperature (temperature sensor)
