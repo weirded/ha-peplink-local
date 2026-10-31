@@ -118,6 +118,65 @@ class PeplinkLocalConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=schema, errors=errors
         )
 
+    async def _async_validate_and_update(
+        self, entry: config_entries.ConfigEntry, data: dict[str, Any], step_id: str, schema: vol.Schema
+    ) -> FlowResult:
+        """Validate new connection data for an existing entry, then save it and reload."""
+        errors: dict[str, str] = {}
+        try:
+            await validate_input(self.hass, data)
+        except PeplinkAuthFailed:
+            errors["base"] = "invalid_auth"
+        except PeplinkSSLError:
+            errors["base"] = "ssl_error"
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception")
+            errors["base"] = "unknown"
+        else:
+            return self.async_update_reload_and_abort(entry, data=data)
+        return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Change the address or login of a router, e.g. to an admin login for controls."""
+        entry = self._get_reconfigure_entry()
+        defaults = {**entry.data, **(user_input or {})}
+        schema = vol.Schema({
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD): str,
+            vol.Optional(CONF_VERIFY_SSL, default=defaults.get(CONF_VERIFY_SSL, False)): bool,
+        })
+        if user_input is None:
+            return self.async_show_form(step_id="reconfigure", data_schema=schema)
+        return await self._async_validate_and_update(
+            entry, {**entry.data, **user_input}, "reconfigure", schema
+        )
+
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+        """Start re-authentication after the router rejected the stored login."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask for a new login for the router."""
+        entry = self._get_reauth_entry()
+        schema = vol.Schema({
+            vol.Required(CONF_USERNAME, default=entry.data.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD): str,
+        })
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=schema,
+                description_placeholders={"host": entry.data[CONF_HOST]},
+            )
+        return await self._async_validate_and_update(
+            entry, {**entry.data, **user_input}, "reauth_confirm", schema
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
