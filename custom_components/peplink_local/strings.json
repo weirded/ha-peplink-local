@@ -10,6 +10,24 @@
           "password": "Password",
           "verify_ssl": "Verify SSL certificate"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Peplink Router",
+        "description": "Change the router's address or login. Switches and buttons that control the router appear only with an admin login.",
+        "data": {
+          "host": "IP Address",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL Certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Peplink Router",
+        "description": "The router at {host} rejected the stored login. Enter a valid one.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -19,7 +37,9 @@
       "ssl_error": "SSL certificate error"
     },
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "The router was reconfigured",
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {
